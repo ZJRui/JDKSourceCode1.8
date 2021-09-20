@@ -34,14 +34,17 @@ import sun.misc.SharedSecrets;
  * operations common to all reference objects.  Because reference objects are
  * implemented in close cooperation with the garbage collector, this class may
  * not be subclassed directly.
+ * <p>
+ * 引用对象的抽象基类。这个类定义了所有引用对象的通用操作。因为引用对象是与垃圾回收器密切合作实现的，所以这个类不能直接子类化。
  *
- * @author   Mark Reinhold
- * @since    1.2
+ * @author Mark Reinhold
+ * @since 1.2
  */
 
 public abstract class Reference<T> {
 
     /* A Reference instance is in one of four possible internal states:
+          Reference实例有以下四种可能的内部状态:
      *
      *     Active: Subject to special treatment by the garbage collector.  Some
      *     time after the collector detects that the reachability of the
@@ -50,53 +53,118 @@ public abstract class Reference<T> {
      *     whether or not the instance was registered with a queue when it was
      *     created.  In the former case it also adds the instance to the
      *     pending-Reference list.  Newly-created instances are Active.
+                           活动的:接受垃圾回收器的特殊处理。一些
+                *时间后，收集器检测的可达
+                * referent已经改变到适当的状态，它改变
+                *实例的状态为Pending或Inactive，取决于
+                *是否在队列中注册了实例
+                *创建。在前一种情况下，它还将实例添加到
+                * pending-Reference列表。新创建的实例为“Active”。
+
+                Reference刚开始被构造时处于这个状态。当对象的可达性发生改变（不再可达）的某个时间后，、
+                会被更改为pending状态（前提是构造Reference对象时传入了引用队列）。
+
+
+                Pending: 当Reference包装的referent = null的时候（当对象的可达性发生改变（不再可达）的某个时间后），JVM会把Reference设置成pending状态。
+                如果Reference创建时指定了ReferenceQueue，那么会被ReferenceHandler线程处理进入到ReferenceQueue队列中，如果没有就进入Inactive状态。
+
+                ===================================
+
      *
      *     Pending: An element of the pending-Reference list, waiting to be
      *     enqueued by the Reference-handler thread.  Unregistered instances
      *     are never in this state.
-     *
+                * Pending: Pending - reference列表中的元素，等待被挂起
+                *被引用处理程序线程加入队列。未注册的实例
+                *从未处于这种状态。
+                挂起状态： 一个挂起引用列表中等待被引用处理线程排队的元素。没有注册的实例不可能有这个状态。
+                处于这个状态时，说明引用列表即将被ReferenceHandler线程加入到引用队列的对象（前提是构造Reference对象时传入了引用队列）。
+
+                我觉得：当Reference对象所包装的referent对象为null的时候，Reference对象处于Pending状态，他等待被ReferenceHandler线程
+                放入到队列Queue（这个队列是我们在创建Reference对象时指定的Queue）中。 如果被放入到了Queue中，则其状态变成Enqueued
+     *===========================
      *     Enqueued: An element of the queue with which the instance was
      *     registered when it was created.  When an instance is removed from
      *     its ReferenceQueue, it is made Inactive.  Unregistered instances are
      *     never in this state.
-     *
+                           Enqueued:实例所在队列的一个元素
+                *在创建时注册。当实例从
+                *它的ReferenceQueue，它是Inactive。未注册的实例
+                从来没有在这种状态。
+                这个引用的对象即将被垃圾回收时处于这个状态，此时已经被JVM加入到了引用队列（如果构造时指定的话），当从引用队列中取出时，状态随之变为inactive状态。
+     *=======================
      *     Inactive: Nothing more to do.  Once an instance becomes Inactive its
      *     state will never change again.
+                      不活跃的:无事可做。一旦实例变为Inactive，它的
+                *状态永远不会再改变。
+                引用的对象已经被垃圾回收，一旦处于这个状态就无法改变了。
      *
+
+     =============================
      * The state is encoded in the queue and next fields as follows:
+       *状态编码在队列和下一个字段如下:
      *
      *     Active: queue = ReferenceQueue with which instance is registered, or
      *     ReferenceQueue.NULL if it was not registered with a queue; next =
      *     null.
+     激活的:queue = ReferenceQueue实例被注册，或者
+* ReferenceQueue。如果没有注册到队列，则为NULL;下一个=
+* null。
      *
      *     Pending: queue = ReferenceQueue with which instance is registered;
      *     next = this
      *
+     Pending: queue = ReferenceQueue;
+* next = this
+
      *     Enqueued: queue = ReferenceQueue.ENQUEUED; next = Following instance
      *     in queue, or this if at end of list.
+     * Enqueued: queue = referencqueue . Enqueued;next =下面的实例
+*在队列中，或者这个if在列表的末尾。
+＊
      *
      *     Inactive: queue = ReferenceQueue.NULL; next = this.
+     *未激活:queue = referencqueue . null;下一个=。
      *
      * With this scheme the collector need only examine the next field in order
      * to determine whether a Reference instance requires special treatment: If
      * the next field is null then the instance is active; if it is non-null,
      * then the collector should treat the instance normally.
-     *
+     **在这种模式下，收集器只需要按顺序检查下一个字段
+*确定引用实例是否需要特殊处理
+*下一个字段为空，则该实例是活动的;如果它是非空的，
+*则收集器应该正常地处理实例。
+
      * To ensure that a concurrent collector can discover active Reference
      * objects without interfering with application threads that may apply
      * the enqueue() method to those objects, collectors should link
      * discovered objects through the discovered field. The discovered
      * field is also used for linking Reference objects in the pending list.
+*确保并发收集器可以发现活动的引用
+*对象而不干扰可能应用的应用程序线程
+* enqueue()方法指向那些对象，收集器应该链接
+*通过发现的领域发现的对象。所发现的
+字段也用于链接挂起列表中的引用对象。
+
      */
 
     private T referent;         /* Treated specially by GC */
 
+    /**
+     * ReferenceQueue，即引用队列，当一个Reference引用的对象被垃圾回收后，这个Reference会被加入到这个队列（前提是在构造Reference时声明了这个队列）。
+     * 表示被包装的对象被回收时，需要被通知的队列，该队列在Reference构造函数中指定。当Referent被回收时，Reference对象就出在了Pending状态，
+     * Reference会等待被放入到该队列中。如果放入到了队列中Reference对象的状态变成Enqueue。 如果构造函数没有指定队列，那么就进入inactive状态。
+     *
+     */
     volatile ReferenceQueue<? super T> queue;
 
     /* When active:   NULL
      *     pending:   this
      *    Enqueued:   next reference in queue (or this if last)
      *    Inactive:   this
+     *
+     *  当Reference对象在queue中时（即Reference处于Enqueued状态），next描述当前引用节点所存储的下一个即将被处理的节点。
+     * ReferenceHandler线程会把pending状态的Reference放入ReferenceQueue中，上面说的next，discovered 字段在入队之后也会发生变化，下一小节会介绍。
      */
     @SuppressWarnings("rawtypes")
     volatile Reference next;
@@ -113,7 +181,9 @@ public abstract class Reference<T> {
      * therefore critical that any code holding this lock complete as quickly
      * as possible, allocate no new objects, and avoid calling user code.
      */
-    static private class Lock { }
+    static private class Lock {
+    }
+
     private static Lock lock = new Lock();
 
 
@@ -121,10 +191,28 @@ public abstract class Reference<T> {
      * References to this list, while the Reference-handler thread removes
      * them.  This list is protected by the above lock object. The
      * list uses the discovered field to link its elements.
+     *
+     * 等待进入队列的引用列表。收集器补充道
+     *当Reference-handler线程移除时，对这个列表的引用
+     *。这个列表受上述锁对象的保护。的
+     * list使用发现的字段链接它的元素。
+
+     * * 注意：当JVM收集器将对象回收，Reference的referent为null的时候，收集器需要将Reference对象
+     * 设置为Pending状态，也就是将其放置到Pending队列中。 也就是收集器将Reference对象放置到pending List中。
+     *
+     * Reference-handler thread 将Reference从pending list中移除，并将其放置到Queue中，设置为Enqueued状态
+     *
+     * pending理解链表有点费解，因为代码层面上看这明明就是Reference对象。其实当Reference处在Pending状态时，他的pending字段被
+     * 赋值成了下一个要处理的对象（即下面讲的discovered），通过discovered可以拿到下一个对象并且赋值给pending，
+     * 直到最后一个，所以这里就可以把它当成一个链表。而discovered是JVM的垃圾回收器添加进去的，大家可以不用关心底层细节。
+     *
      */
     private static Reference<Object> pending = null;
 
-    /* High-priority thread to enqueue pending References
+    /**
+     * High-priority thread to enqueue pending References
+     * 高优先级线程将挂起的引用放入队列
+     *
      */
     private static class ReferenceHandler extends Thread {
 
@@ -150,10 +238,11 @@ public abstract class Reference<T> {
 
         public void run() {
             while (true) {
+
                 tryHandlePending(true);
             }
         }
-    }
+    }// end ReferenceHanlder
 
     /**
      * Try handle pending {@link Reference} if there is one.<p>
@@ -167,9 +256,25 @@ public abstract class Reference<T> {
      *                      or interrupted; if {@code false}, return immediately
      *                      when there is no pending {@link Reference}.
      * @return {@code true} if there was a {@link Reference} pending and it
-     *         was processed, or we waited for notification and either got it
-     *         or thread was interrupted before being notified;
-     *         {@code false} otherwise.
+     * was processed, or we waited for notification and either got it
+     * or thread was interrupted before being notified;
+     * {@code false} otherwise.
+     *
+     *
+     * 如果有的话，尝试处理pending Reference。
+     * 返回true作为提示，表示可能有另一个Reference挂起;返回false表示目前没有挂起的Reference，程序可以做一些其他有用的工作，而不是循环。
+     *
+     * 参数:
+     * waitForNotify -如果为true，并且没有pending Reference，等待直到VM通知或中断;如果为false，则在没有pending Reference时立即返回。
+     * 返回:
+     * 如果有一个Reference pending并且它被处理了，或者我们在等待通知并得到了它，或者线程在被通知之前被中断了，则为true;否则错误。
+     *
+     *
+     *
+     * 问题：这个 tryHandlePending 方法被调用了两次， 一次是在ReferenceHandler线程的run方法中，一次是在下面的
+     *  SharedSecrets.setJavaLangRefAccess 方法中。 第二次调用是什么意思？
+     *
+     *
      */
     static boolean tryHandlePending(boolean waitForNotify) {
         Reference<Object> r;
@@ -214,15 +319,32 @@ public abstract class Reference<T> {
         }
 
         ReferenceQueue<? super Object> q = r.queue;
+        /**
+         * ReferenceQueue入队过程
+         * 上面说到ReferenceHandler线程会把pending状态的Reference对象放入到ReferenceQueue队列中。
+         * 查看ReferenceQueue中入队源代码。
+         *
+         */
         if (q != ReferenceQueue.NULL) q.enqueue(r);
         return true;
     }
 
     static {
+        /**
+         *
+         * 问题： 我们在上面看到了 ReferenceHandler线程，那么这个线程什么时候被创建 什么时候被启动，
+         * 是不是每一个Reference对象都有一个ReferenceHandler线程呢？
+         *
+         * 这段代码是一个静态代码块，因此ReferenceHandler线程只会被创建一次，且JVM启动的时候就会启动
+         *
+         * 那么这个ReferenceHandler线程做了什么任务呢？ 只有一个对象ReferenceHandler 他又是如何与所有的Reference对象进行交互的？
+         *
+         */
         ThreadGroup tg = Thread.currentThread().getThreadGroup();
         for (ThreadGroup tgn = tg;
              tgn != null;
-             tg = tgn, tgn = tg.getParent());
+             tg = tgn, tgn = tg.getParent())
+            ;
         Thread handler = new ReferenceHandler(tg, "Reference Handler");
         /* If there were a special system-only priority greater than
          * MAX_PRIORITY, it would be used here
@@ -235,6 +357,11 @@ public abstract class Reference<T> {
         SharedSecrets.setJavaLangRefAccess(new JavaLangRefAccess() {
             @Override
             public boolean tryHandlePendingReference() {
+                /**
+                 * 这里调用了上面的tryHandlePending 方法，
+                 * 问题： 为什么这里要调用这个方法，  handlePending的工作不是交给ReferenceHandler线程来处理的吗
+                 *
+                 */
                 return tryHandlePending(false);
             }
         });
@@ -247,8 +374,8 @@ public abstract class Reference<T> {
      * been cleared, either by the program or by the garbage collector, then
      * this method returns <code>null</code>.
      *
-     * @return   The object to which this reference refers, or
-     *           <code>null</code> if this reference object has been cleared
+     * @return The object to which this reference refers, or
+     * <code>null</code> if this reference object has been cleared
      */
     public T get() {
         return this.referent;
@@ -260,6 +387,10 @@ public abstract class Reference<T> {
      *
      * <p> This method is invoked only by Java code; when the garbage collector
      * clears references it does so directly, without invoking this method.
+     * 清除此引用对象。调用此方法不会导致该对象进入队列。
+     * 此方法仅由Java代码调用;当垃圾回收器清除引用时，它会直接清除引用，而不需要调用此方法。
+     * <p>
+     * //清除这个引用的对象，并不会导致这个Reference加入到引用队列
      */
     public void clear() {
         this.referent = null;
@@ -273,9 +404,14 @@ public abstract class Reference<T> {
      * the program or by the garbage collector.  If this reference object was
      * not registered with a queue when it was created, then this method will
      * always return <code>false</code>.
+     * <p>
+     * <p>
+     * 指示该引用对象是否已被程序或垃圾回收器入队。如果这个引用对象在创建时没有在队列中注册，那么这个方法将始终返回false。
      *
-     * @return   <code>true</code> if and only if this reference object has
-     *           been enqueued
+     * @return <code>true</code> if and only if this reference object has
+     * been enqueued
+     * <p>
+     * //返回这个对象是否已经入队
      */
     public boolean isEnqueued() {
         return (this.queue == ReferenceQueue.ENQUEUED);
@@ -288,9 +424,9 @@ public abstract class Reference<T> {
      * <p> This method is invoked only by Java code; when the garbage collector
      * enqueues references it does so directly, without invoking this method.
      *
-     * @return   <code>true</code> if this reference object was successfully
-     *           enqueued; <code>false</code> if it was already enqueued or if
-     *           it was not registered with a queue when it was created
+     * @return <code>true</code> if this reference object was successfully
+     * enqueued; <code>false</code> if it was already enqueued or if
+     * it was not registered with a queue when it was created
      */
     public boolean enqueue() {
         return this.queue.enqueue(this);
@@ -303,6 +439,16 @@ public abstract class Reference<T> {
         this(referent, null);
     }
 
+    /**
+     * reference表示需要被引用的对象，queue表示引用队列。
+     * 如果指定了引用队列，那么当这个引用的对象被回收后，这个Reference对象本身会被加入到指定的ReferenceQueue。
+     * 另外，PhantomReference只提供了第二种参数类型构造方法。
+     * <p>
+     * 注意： 是引用对象本身进入到 queue队列中，而不是引用对象所引用的对象进入队列
+     *
+     * @param referent
+     * @param queue
+     */
     Reference(T referent, ReferenceQueue<? super T> queue) {
         this.referent = referent;
         this.queue = (queue == null) ? ReferenceQueue.NULL : queue;
