@@ -389,6 +389,13 @@ public abstract class Reference<T> {
                      *
                      *  Cleaner extends PhantomReference<Object>  ,因此Cleaner也是Reference
                      *
+                     *问题：这里为什么要判断 当前进入队列的元素（也就是pending队列的头结点，也就是Reference类的pending属性）是否是Clear类型的对象？
+                     * 要解释这个问题，我们要思考ReferenceQueue的作用是什么？我们希望当一个对象被gc掉的时候通知用户线程，进行额外的处理时，
+                     * 就需要使用引用队列了。ReferenceQueue即这样的一个对象，当一个obj被gc掉之后，其相应的包装类，即ref对象会被放入queue中。
+                     * 我们可以从queue中获取到相应的对象信息，同时进行额外的处理。比如反向操作，数据清理等。
+                     * 实际上这里判断r是否是Cleaner主要是为了 后面能够执行Cleaner的clear方法，这样就能够实现 ：当引用对象所引用的目标对象被回收之后，垃圾回收器
+                     * 会将引用对象放置到pending队列中，然后ReferenceHandler线程会不停的从pending队列中取出 Reference将其放入到ReferenceQueue中，
+                     * 这个时候为了能够通知用户做清理工作，我们定义了一个clear方法。 在Cleaner类的clear方法中，我们看到了释放内存的操作。
                      *
                      */
                     c = r instanceof Cleaner ? (Cleaner) r : null;

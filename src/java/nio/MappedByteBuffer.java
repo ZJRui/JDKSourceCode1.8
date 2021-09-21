@@ -61,16 +61,80 @@ import sun.misc.Unsafe;
  * @author Mark Reinhold
  * @author JSR-51 Expert Group
  * @since 1.4
+ *
+ *
+ *
+ *
+ *
+ *
+ * 一种直接字节缓冲区，其内容是文件的内存映射区域。
+ * 映射字节缓冲区是通过FileChannel创建的。地图的方法。这个类通过特定于内存映射文件区域的操作扩展了ByteBuffer类。
+ * 映射的字节缓冲区及其所代表的文件映射在缓冲区本身被垃圾回收之前都是有效的。
+ * 映射字节缓冲区的内容可以在任何时候改变，例如，如果映射文件的相应区域的内容被这个或另一个程序改变了。这些更改是否发生以及何时发生取决于操作系统，
+ * 因此是未指定的。
+ * 映射字节缓冲区的全部或部分在任何时候都可能无法访问，例如，如果映射文件被截断。尝试访问映射字节缓冲区的不可访问区域不会改变缓冲区的内容，
+ * 并将导致在访问时或稍后某个时间抛出未指定的异常。因此，强烈建议采取适当的预防措施，以避免该程序或并发运行的程序对映射文件的操作，
+ * 但读取或写入文件的内容除外。
+ * 否则，映射字节缓冲区的行为与普通直接字节缓冲区没有什么不同。
+ *
+ * <p></p>
+ *
+ * MappedByteBuffer 有两个子类DirectByteBuffer和DirectByteBufferR
+ * --------------------
+ *
+ * <p></p>
+ * 问题：关于内存释放
+ * 通过DirectByteBuffer就可以知道，MappedByteBuffer对象使用是直接内存，因为FileChannel的map方法返回的MappedByteBuffer实际上是DirectByteBuffer类的对象
+ * 我们都知道直接内存是不受java堆内存管理，这就引发了一个问题，如何释放MappedByteBuffer对象占用的直接内存？
+ * DirectByteBuffer是对外内存，对外内存是存在于JVM管控之外的一块内存区域，因此他不受JVMD管控。
+ * 在讲解DirectByteBuffer之前，需要先了解两个知识点：
+ * （1）Java引用类型，因为DirectByteBuffer是通过虚引用（Phantom Reference）来实现堆外内存的释放的
+ * PhantomReference 是所有 弱引用类型种最弱的引用类型，不同于软引用和弱引用，虚引用无法通过get方法来取得目标对象的强引用从而使用目标对象，观察源码可以发现get被重写永远返回null
+ *
+ * 那虚引用到底有什么作用？其实虚引用主要被用来 跟踪对象被垃圾回收的状态，通过查看引用队列中是否包含对象所对应的虚引用来判断它是否 即将被垃圾回收，从而采取行动。它并不被期待用来取得目标对象的引用，而目标对象被回收前，它的引用会被放入一个 ReferenceQueue 对象中，从而达到跟踪对象垃圾回收的作用。
+ * 关于java引用类型的实现和原理可以阅读之前的文章Reference 、ReferenceQueue 详解 和Java 引用类型简述
+ * (2)关于Linux的内核态和用户态
+ * 当我们通过JNI调用的native方法实际上就是从用户态切换到了内核态的一种方式。并且通过该系统调用使用操作系统所提供的功能。
+ * Q：为什么需要用户进程(位于用户态中)要通过系统调用(Java中即使JNI)来调用内核态中的资源，或者说调用操作系统的服务了？
+ * A：intel cpu提供Ring0-Ring3四种级别的运行模式，Ring0级别最高，Ring3最低。Linux使用了Ring3级别运行用户态，Ring0作为内核态。
+ * Ring3状态不能访问Ring0的地址空间，包括代码和数据。因此用户态是没有权限去操作内核态的资源的，它只能通过系统调用外完成用户态到内核态的切换，然后在完成相关操作后再有内核态切换回用户态。
+ *
+ * --------------
+ * <p></p>
+ * DirectByteBuffer ———— 直接缓冲
+ * DirectByteBuffer是Java用于实现堆外内存的一个重要类，我们可以通过该类实现堆外内存的创建、使用和销毁。
+ *
+ * DirectByteBuffer该类本身还是位于Java内存模型的堆中。堆内内存是JVM可以直接管控、操纵。
+ * 而DirectByteBuffer中的unsafe.allocateMemory(size);是个一个native方法，这个方法分配的是堆外内存，通过C的malloc来进行分配的。
+ * 分配的内存是系统本地的内存，并不在Java的内存中，也不属于JVM管控范围，所以在DirectByteBuffer一定会存在某种方式来操纵堆外内存。
+ * 在DirectByteBuffer的父类Buffer中有个address属性：
+ *    // Used only by direct buffers
+ *     // NOTE: hoisted here for speed in JNI GetDirectBufferAddress
+ *     long address;
+ *
+ * address只会被直接缓存给使用到。之所以将address属性升级放在Buffer中，是为了在JNI调用GetDirectBufferAddress时提升它调用的速率。
+ * address表示分配的堆外内存的地址。
+ * unsafe.allocateMemory(size);分配完堆外内存后就会返回分配的堆外内存基地址，并将这个地址赋值给了address属性。这样我们后面通过JNI对这个堆外内存操作时都是通过这个address来实现的了。
+ *
+ *
  */
 
 public abstract class MappedByteBuffer
     extends ByteBuffer
 {
 
+
+
     // This is a little bit backwards: By rights MappedByteBuffer should be a
     // subclass of DirectByteBuffer, but to keep the spec clear and simple, and
     // for optimization purposes, it's easier to do it the other way around.
     // This works because DirectByteBuffer is a package-private class.
+    /**
+     * //这有点倒退
+     * // 正确的方式 MappedByteBuffer应该是DirectByteBuffer的子类。DirectByteBuffer的子类，但是为了保持规范的清晰和简单，并且
+     * //为优化目的，它更容易做相反的方法。
+     * //这是因为DirectByteBuffer是一个包私有类。
+     */
 
     // For mapped buffers, a FileDescriptor that may be used for mapping
     // operations if valid; null if the buffer is not mapped.
@@ -129,6 +193,15 @@ public abstract class MappedByteBuffer
      *
      * @return  <tt>true</tt> if it is likely that this buffer's content
      *          is resident in physical memory
+     *
+     *
+     *      说明该缓冲区的内容是否驻留在物理内存中。
+     * 返回值为true意味着该缓冲区中的所有数据极有可能都驻留在物理内存中，因此可以在不引发任何虚拟内存页面错误或I/O操作的情况下访问它们。
+     * 返回值为false并不一定意味着缓冲区的内容不在物理内存中。
+     * 返回值是一个提示，而不是保证，因为在此方法调用返回时，底层操作系统可能已经换出了缓冲区的一些数据。
+     *
+     * 返回:
+     * 如果该缓冲区的内容很可能驻留在物理内存中，则为
      */
     public final boolean isLoaded() {
         checkMapped();
@@ -151,6 +224,15 @@ public abstract class MappedByteBuffer
      * occur. </p>
      *
      * @return  This buffer
+     *
+     * 将该缓冲区的内容加载到物理内存中。
+     * 该方法尽最大努力确保当它返回时，该缓冲区的内容驻留在物理内存中。调用此方法可能会导致出现一些页面错误和I/O操作。
+     *
+     * 返回:
+     * 这个缓冲区
+     * 的注释:
+     * @org.jetbrains.annotations。合同(“→这种“)
+     *
      */
     public final MappedByteBuffer load() {
         checkMapped();

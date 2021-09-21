@@ -35,32 +35,39 @@ import sun.nio.ch.DirectBuffer;
 
 
 class DirectByteBuffer
-
     extends MappedByteBuffer
-
-
-
-    implements DirectBuffer
+        implements DirectBuffer
 {
 
 
 
-    // Cached unsafe-access object
+    // Cached unsafe-access object 缓存unsafe-access对象
     protected static final Unsafe unsafe = Bits.unsafe();
 
-    // Cached array base offset
+    // Cached array base offset 缓存数组基偏移量
     private static final long arrayBaseOffset = (long)unsafe.arrayBaseOffset(byte[].class);
 
-    // Cached unaligned-access capability
+    // Cached unaligned-access capability Cached unaligned-access capability
     protected static final boolean unaligned = Bits.unaligned();
 
     // Base address, used in all indexing calculations
     // NOTE: moved up to Buffer.java for speed in JNI GetDirectBufferAddress
     //    protected long address;
+    /**
+     * //基址，用于所有的索引计算
+     * //注意:在JNI的GetDirectBufferAddress中向上移动到Buffer.java以提高速度
+     * //保护长地址;
+     */
 
     // An object attached to this buffer. If this buffer is a view of another
     // buffer then we use this field to keep a reference to that buffer to
     // ensure that its memory isn't freed before we are done with it.
+    /**
+     * //附加到这个缓冲区的对象。如果这个缓冲区是另一个缓冲区的视图
+     * 然后我们使用这个字段来保持对该缓冲区的引用
+     * //确保它的内存在我们完成之前没有被释放。
+     *
+     */
     private final Object att;
 
     public Object attachment() {
@@ -138,7 +145,6 @@ class DirectByteBuffer
         }
         cleaner = Cleaner.create(this, new Deallocator(base, size, cap));
         att = null;
-
 
 
     }
