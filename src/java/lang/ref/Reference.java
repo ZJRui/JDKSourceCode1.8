@@ -41,6 +41,11 @@ import sun.misc.SharedSecrets;
  * @since 1.2
  */
 
+/**
+ * https://www.jianshu.com/p/d275812816e5
+ *
+ * @param <T>
+ */
 public abstract class Reference<T> {
 
     /* A Reference instance is in one of four possible internal states:
@@ -126,6 +131,7 @@ public abstract class Reference<T> {
      *     Inactive: queue = ReferenceQueue.NULL; next = this.
      *未激活:queue = referencqueue . null;下一个=。
      *
+     =================================
      * With this scheme the collector need only examine the next field in order
      * to determine whether a Reference instance requires special treatment: If
      * the next field is null then the instance is active; if it is non-null,
@@ -135,16 +141,18 @@ public abstract class Reference<T> {
 *下一个字段为空，则该实例是活动的;如果它是非空的，
 *则收集器应该正常地处理实例。
 
+===============================
      * To ensure that a concurrent collector can discover active Reference
      * objects without interfering with application threads that may apply
      * the enqueue() method to those objects, collectors should link
      * discovered objects through the discovered field. The discovered
      * field is also used for linking Reference objects in the pending list.
-*确保并发收集器可以发现活动的引用
-*对象而不干扰可能应用的应用程序线程
-* enqueue()方法指向那些对象，收集器应该链接
-*通过发现的领域发现的对象。所发现的
-字段也用于链接挂起列表中的引用对象。
+     * 保证一个并发收集器可以发现活跃的Reference
+      * 对象不干扰可能适用的应用程序线程
+      * enqueue() 方法到这些对象，收集者应该链接
+      * 通过发现的字段发现的对象。 发现的
+      * 字段还用于链接挂起列表中的参考对象。
+      注意这个属性并不是static类型的，pending属性是static类型的
 
      */
 
@@ -154,6 +162,18 @@ public abstract class Reference<T> {
      * ReferenceQueue，即引用队列，当一个Reference引用的对象被垃圾回收后，这个Reference会被加入到这个队列（前提是在构造Reference时声明了这个队列）。
      * 表示被包装的对象被回收时，需要被通知的队列，该队列在Reference构造函数中指定。当Referent被回收时，Reference对象就出在了Pending状态，
      * Reference会等待被放入到该队列中。如果放入到了队列中Reference对象的状态变成Enqueue。 如果构造函数没有指定队列，那么就进入inactive状态。
+     *
+     * 注意这个属性并不是static类型的，pending属性是static类型的
+     *
+     * //所属的引用队列，如果指定了引用队列并且没有入队，那么queue指向的就是指定的引用队列，如果没有指定
+     * 	//引用队列，则默认为ReferenceQueue.NULL，如果入队，则queue改为java.lang.ref.ReferenceQueue#ENQUEUED,所以这个变量
+     * 	//既可以保存指定的引用队列，也可以作为一个标记判断这个Reference有没有入队
+     * 	//设置为volatile是因为有ReferenceHandler线程负责入队操作，即会更改这个queue指向ENQUEUED
+     *
+     * 	注意：一旦当前Reference对象进入到其属性queue所指定的ReferenceQueue中，那么当前Reference对象的queue属性就会被设置为java.lang.ref.ReferenceQueue#ENQUEUED
+     * 	这个逻辑是在ReferenceQueue的enqueue方法中实现的。
+     *
+     *
      *
      */
     volatile ReferenceQueue<? super T> queue;
@@ -172,6 +192,19 @@ public abstract class Reference<T> {
     /* When active:   next element in a discovered reference list maintained by GC (or this if last)
      *     pending:   next element in the pending list (or null if last)
      *   otherwise:   NULL
+     *
+     * 活动时:发现的由GC维护的引用列表中的下一个元素(如果是最后一个)
+     * pending: pending列表中的下一个元素(如果最后一个元素是null)
+     *其他:零
+     *
+     * 注意这个属性并不是static类型的，pending属性是static类型的
+     *
+     * 注意这个属性是由 JVM使用的
+     *
+     * discovered: 当处于Reference处在pending状态：discovered为pending集合中的下一个元素；其他状态：discovered为null
+     *
+     * //由JVM控制，表示下一个要被回收的对象
+     *垃圾收集器管理的引用列表中下一个引用对象，由JVM管理和赋值。
      */
     transient private Reference<T> discovered;  /* used by VM */
 
@@ -206,8 +239,14 @@ public abstract class Reference<T> {
      * 赋值成了下一个要处理的对象（即下面讲的discovered），通过discovered可以拿到下一个对象并且赋值给pending，
      * 直到最后一个，所以这里就可以把它当成一个链表。而discovered是JVM的垃圾回收器添加进去的，大家可以不用关心底层细节。
      *
+     *
+     *
+     * 注意这个pending是一个static 类型的属性，也就意味着所有的Reference对象共享同一个pending，jvm内唯一。
+     *
+     *	//引用列表中下一个要进入引用队列的对象(这个引用的对象已经被GC)，由ReferenceHandler线程负责加入队列
+	//pending由JVM赋值
      */
-    private static Reference<Object> pending = null;
+    private static Reference<Object> pending = null;//注意这个pending是一个static 类型的属性，也就意味着所有的Reference对象共享同一个pending，jvm内唯一。
 
     /**
      * High-priority thread to enqueue pending References
@@ -228,6 +267,10 @@ public abstract class Reference<T> {
             // pre-load and initialize InterruptedException and Cleaner classes
             // so that we don't get into trouble later in the run loop if there's
             // memory shortage while loading/initializing them lazily.
+            /**
+             * //预加载并初始化InterruptedException类和Cleaner类，这样当惰性加载/初始化它们时，如果出现内存短缺，就不会在运行循环中遇到麻烦。
+             *
+             */
             ensureClassInitialized(InterruptedException.class);
             ensureClassInitialized(Cleaner.class);
         }
@@ -236,9 +279,30 @@ public abstract class Reference<T> {
             super(g, name);
         }
 
+        /**
+         *
+         * Reference是如何被放入队列的
+         *
+         * Reference类有一个内部静态类ReferenceHandler extends Thread，这个内部类中有静态代码块生成该类的一个守护线程对象并启动。那这个静态内部类的run方法做了什么，有什么作用呢？
+         *
+         *它的作用就是不停地从pending队列取出，并放入ReferenceQueue中。
+         * 这里又出现一个pending队列，它的实现也很简单。Reference类中有一个静态属性Reference pending(注意是静态属性，属于类的，多个Reference对象全局共享)。
+         * 这个pending对象相当于pending队列的顶部，它的discovered属性则是pending队列的下一个元素，以此类推。
+         *
+         *那又是谁把这些Reference对象放入pending队列呢？答案是垃圾收集器，它会把可达性合适的引用放入pending队列
+         *那么整个过程就很明了了，一旦一个Reference引用指向的对象可达性合适，这个引用就会被垃圾收集器放到pending队列中，
+         * 而同时一个辅助线程ReferenceHandler则不停地从中取出Reference对象放入到该对象注册的ReferenceQueue中
+         *
+         */
         public void run() {
+            /**
+             * 死循环
+             */
             while (true) {
 
+                /**
+                 * 注意这里的参数是true
+                 */
                 tryHandlePending(true);
             }
         }
@@ -272,19 +336,61 @@ public abstract class Reference<T> {
      *
      *
      * 问题：这个 tryHandlePending 方法被调用了两次， 一次是在ReferenceHandler线程的run方法中，一次是在下面的
-     *  SharedSecrets.setJavaLangRefAccess 方法中。 第二次调用是什么意思？
+     *  SharedSecrets.setJavaLangRefAccess 方法中。 第二次调用是什么意思？而且这两次调用方法传入的参数一个是true一个是false
      *
+     *
+     * 注意： 注意ReferenceHandler这个类被定义为static ，也就是ReferenceHandler对象并不依赖于外部类Reference 的实例对象而存在，
+     * 换句话说，你可以创建很多个Reference对象，但是 因为  new ReferenceHandler 是在static 块中定义的，因此整个JVM内只有一个ReferenceHandler
+     * 那么Referencehandler 作为线程，线程中 所用到的外部类的属性 也必须是static的，
      *
      */
     static boolean tryHandlePending(boolean waitForNotify) {
         Reference<Object> r;
         Cleaner c;
         try {
+            /**
+             * ReferenceHandler使用到了 static类型的lock属性
+             *
+             */
             synchronized (lock) {
+                /**
+                 *
+                 * pending 这个属性 JVM 给赋值的吗？有些不解。 因为从下面的这个逻辑来看，如果pending不为null，才会给pending赋值；
+                 *
+                 * 如果pening为null，那不就意味着pending永远不会赋值？ JVM在收回对象的时候 会不会将pending 设置为某一个值？
+                 *
+                 * pending是一个Reference类型的对象，Reference对象内部有next属性，因此Reference对象可以构成一个链表结构。
+                 *
+                 * 我们知道pending的本意 表示 当前Reference对象处于 pending队列中。从上面的文档注释： The collector adds
+                 *      * References to this list, while the Reference-handler thread removes them. 中我们可以大约理解到垃圾收集器
+                 *      来处理pending
+                 *
+                 *
+                 * 通过上面代码可以看到ReferenceHandler线程做的是不断的检查pending是否为null,
+                 * 如果不为null,将pending对象进行入队操作，而pending的赋值由JVM操作。所以ReferenceQueue在这里作为JVM与上
+                 * 层Reference对象管理之间的消息传递方式。
+                 *
+                 */
                 if (pending != null) {
+                    /**
+                     * 如果pending不为null，下面的这段逻辑是取出pending链表中的第一个元素，实际上pending就是pending链表的头结点
+                     * 然后discovered是pending链表的第二个节点。这段代码的逻辑就是取出pending节点 作为 赋值给r。
+                     * 然后将discovered 节点作为pending节点，从而作为链表的头结点。
+                     *
+                     * 然后将原来的pending头结点 放入到queue所指向的ReferenceQueue队列中。也就是queue.enqueue(r); 这个r就是原来的pending链表头结点
+                     *
+                     */
                     r = pending;
                     // 'instanceof' might throw OutOfMemoryError sometimes
                     // so do this before un-linking 'r' from the 'pending' chain...
+                    /**
+                     * // 'instanceof'有时可能抛出OutOfMemoryError
+                     * //在从'pending'链中解除'r'链接之前执行此操作…
+                     *
+                     *  Cleaner extends PhantomReference<Object>  ,因此Cleaner也是Reference
+                     *
+                     *
+                     */
                     c = r instanceof Cleaner ? (Cleaner) r : null;
                     // unlink 'r' from 'pending' chain
                     pending = r.discovered;
@@ -353,13 +459,14 @@ public abstract class Reference<T> {
         handler.setDaemon(true);
         handler.start();
 
-        // provide access in SharedSecrets
+        // provide access in SharedSecrets //检查java.lang.ref包的访问权限？
         SharedSecrets.setJavaLangRefAccess(new JavaLangRefAccess() {
             @Override
             public boolean tryHandlePendingReference() {
                 /**
                  * 这里调用了上面的tryHandlePending 方法，
                  * 问题： 为什么这里要调用这个方法，  handlePending的工作不是交给ReferenceHandler线程来处理的吗
+                 * 问题2： 注意下面调用tryHandlePending方法的时候传递的参数是false
                  *
                  */
                 return tryHandlePending(false);
@@ -427,6 +534,29 @@ public abstract class Reference<T> {
      * @return <code>true</code> if this reference object was successfully
      * enqueued; <code>false</code> if it was already enqueued or if
      * it was not registered with a queue when it was created
+     *
+     * 将此引用对象添加到其注册的队列(如果有的话)。
+     * 此方法仅由Java代码调用;当垃圾回收器进行队列引用时，它直接这样做，而不需要调用此方法。
+     *
+     * 返回:
+     * 如果该引用对象成功进入队列，则为True;如果它已经进入队列，或者它在创建时没有注册到队列中，则为False
+     *
+     *问题：对于一个软引用，当其所引用的对象 不存在任何强引用引用了该对象 ，且内存出现紧张的时候，JVM会回收这个对象及其所有的软引用。
+     * 那么我们还需要关心的一个问题是 ：如何主动触发 放弃对这个软引用，这个时候我们需要做两个步骤：（1）清除该引用对象中的referent属性，也就是调用Reference的enqueue方法
+     * （2）将这个引用对象放置到其属性queue所指向的ReferenceQueue中。
+     * 这个用法可以在Spring的ConcurrentReferenceHashMap类的内部类SoftEntryReference<K,V>的release方法中看到。
+     * SoftEntryReference是一个SoftReference的子类，他引用的对象类型是Map.Entry<K,V> ,如果我们想放弃一个SoftEntryReference对象，则需要
+     * 执行enqueu方法和clear方法。因此其release方法实现如下
+     * public void release() {
+     * 			enqueue();//将引用对象自身放置到queue中
+     * 			clear();//清除引用内部的属性referent（所引用的具体对象）
+     * }
+     *
+     * 另外在JDK中的 FinalizableReferenceQueue类中的 close方法的实现中 也调用 enqueu 和clear方法。
+     *
+     *
+     *  * 考虑当我我们从map中移除一个元素的时候，我们需要将引用和 这个引用所关联的对象 之间的关系解除。从而确保即便 对象存在的情况下 这个引用对象仍然能够被及时释放
+     *
      */
     public boolean enqueue() {
         return this.queue.enqueue(this);
