@@ -1717,16 +1717,42 @@ public class Thread implements Runnable {
     // fields are used to build the high-performance PRNGs in the
     // concurrent code, and we can not risk accidental false sharing.
     // Hence, the fields are isolated with @Contended.
+    /**
+     * 以下是哪个最初未初始化的字段是独占的，由ThreadLocalRandom管理。
+     * 这些字段用于在并发代码，  我们不能冒意外伪共享的风险。 因此这些字段是用@Contended隔离的
+     *
+     * 由于下面三个变量只能被当前线程访问，所以没必要加volatile关键字。
+     *
+     */
 
-    /** The current seed for a ThreadLocalRandom */
+    /** The current seed for a ThreadLocalRandom
+     *  当前线程的种子值
+     * */
     @sun.misc.Contended("tlr")
     long threadLocalRandomSeed;
 
+    /**
+     *
+     * 标记位， 在 java.util.concurrent.ThreadLocalRandom#current() 中被使用， 用来标记当前Thread对象的  threadLocalRandomSeed  和
+     * threadLocalRandomProbe 是否已经设置过值了。
+     *
+     * threadLocalRandomProbe 可以是0 或者1， 如果是0 表示 还未进行初始化操作。
+     *
+     * ThreadLocalRandom类中的 loadInit方法会对 当前线程的这几个属性值进行操作
+     * java.util.concurrent.ThreadLocalRandom#localInit()
+     *
+     * 探测哈希值，如果threadLocalRandomSeed已经初始化了则非0，否则为0
+     *
+     */
     /** Probe hash value; nonzero if threadLocalRandomSeed initialized */
     @sun.misc.Contended("tlr")
     int threadLocalRandomProbe;
 
-    /** Secondary seed isolated from public ThreadLocalRandom sequence */
+    /** Secondary seed isolated from public ThreadLocalRandom sequence
+     *
+     * 辅助种子，在LongAdder 类中使用
+     *
+     * */
     @sun.misc.Contended("tlr")
     int threadLocalRandomSecondarySeed;
 

@@ -169,6 +169,20 @@ public class AtomicLong extends Number implements java.io.Serializable {
      * @return the previous value
      */
     public final long getAndIncrement() {
+        /**
+         * 源码getAndAddLong(Object o, long offset, long delta)中do while循环体是实现的关键所在，其逻辑是：
+         * 第一步先取得AtomicLong里存储的数值，
+         * 第二步对AtomicLong的当前数值进行加1操作，
+         * 第三步调用weakCompareAndSetLong方法来进行原子更新操作，该方法先检查当前数值是否等于v，等
+         * 于意味着AtomicLong的值没有被其他线程修改过，则将weakCompareAndSetLong的当前数值更新成v+delta的值，如果不等于v，
+         * weakCompareAndSetLong方法会返回false，程序会进入do while循环重新进行weakCompareAndSetLong操作。
+         * 这里隐含了一个问题，当对于共享变量（假设变量名字是a）的竞争非常激烈的时候，在当前线程读取a、改变a之间，a的值会被别的线程改变，从而导致当前线程一直重试（自旋），一直占用CPU。
+         * 这就引出另一个问题，对于锁抢占很激烈的时候，串行是最好的解决办法。比如使用synchronized。
+         *
+         * java.util.concurrent.atomic中的原子操作基本是基于Unsafe或者VarHandle实现的。
+         *
+         *
+         */
         return unsafe.getAndAddLong(this, valueOffset, 1L);
     }
 

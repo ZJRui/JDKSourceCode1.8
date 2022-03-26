@@ -101,6 +101,14 @@ public class AtomicReference<V> implements java.io.Serializable {
      * @since 1.6
      */
     public final void lazySet(V newValue) {
+        /**
+         * lazySet是使用Unsafe.putOrderedObject方法，这个方法在对低延迟代码是很有用的，它能够实现非阻塞的写入，
+         * 这些写入不会被Java的JIT重新排序指令(instruction reordering)，这样它使用快速的存储-存储(store-store) barrier,
+         * 而不是较慢的存储-加载(store-load) barrier, 后者总是用在volatile的写操作上，这种性能提升是有代价的，虽然便宜，
+         * 也就是写后结果并不会被其他线程看到，甚至是自己的线程，通常是几纳秒后被其他线程看到，这个时间比较短，所以代价可以忍受。
+         * 设想如下场景: 设置一个 volatile 变量为 null，让这个对象被 GC 掉，volatile write 是消耗比较大（store-load 屏障）的，
+         * 但是 putOrderedInt 只会加 store-store 屏障，损耗会小一些。
+         */
         unsafe.putOrderedObject(this, valueOffset, newValue);
     }
 

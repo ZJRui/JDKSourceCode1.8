@@ -50,80 +50,159 @@ import java.util.stream.StreamSupport;
 import sun.misc.VM;
 
 /**
- * A random number generator isolated to the current thread.  Like the
+ * A random number generator isolated to the current thread.
+ * 当前线程隔离的随机数生成器。
+ * Like the
  * global {@link java.util.Random} generator used by the {@link
  * java.lang.Math} class, a {@code ThreadLocalRandom} is initialized
  * with an internally generated seed that may not otherwise be
- * modified. When applicable, use of {@code ThreadLocalRandom} rather
+ * modified.
+ * 与Math类使用的全局随机生成器一样，ThreadLocalRandom使用内部生成的种子进行初始化，否则该种子可能不会被修改。
+ *
+ * When applicable, use of {@code ThreadLocalRandom} rather
  * than shared {@code Random} objects in concurrent programs will
- * typically encounter much less overhead and contention.  Use of
+ * typically encounter much less overhead and contention.
+ * 如果适用，在并发程序中使用ThreadLocalRandom而不是共享的Random对象通常会遇到更少的开销和争用。
+ * Use of
  * {@code ThreadLocalRandom} is particularly appropriate when multiple
  * tasks (for example, each a {@link ForkJoinTask}) use random numbers
  * in parallel in thread pools.
+ * 当多个任务（列如，每个ForkJoinTask） 在线程池中并行使用随机数时，使用ThreadLocalrandom尤其合适。
  *
  * <p>Usages of this class should typically be of the form:
  * {@code ThreadLocalRandom.current().nextX(...)} (where
  * {@code X} is {@code Int}, {@code Long}, etc).
+ * 典型的使用方式：
+ *
  * When all usages are of this form, it is never possible to
  * accidently share a {@code ThreadLocalRandom} across multiple threads.
+ * 当所有用法都采用这种形式时，永远不可能在多个线程之间意外共享ThreadLocalRandom。
  *
  * <p>This class also provides additional commonly used bounded random
  * generation methods.
+ * 这个类还提供了其他常用的有界随机生成方法
  *
  * <p>Instances of {@code ThreadLocalRandom} are not cryptographically
- * secure.  Consider instead using {@link java.security.SecureRandom}
- * in security-sensitive applications. Additionally,
+ * secure.
+ * ThreadLocalRandom实例在密码学上是不安全的。
+ * Consider instead using {@link java.security.SecureRandom}
+ * in security-sensitive applications.
+ * 考虑在安全敏感的应用程序中使用SecureRandom。
+ * Additionally,
  * default-constructed instances do not use a cryptographically random
  * seed unless the {@linkplain System#getProperty system property}
  * {@code java.util.secureRandomSeed} is set to {@code true}.
  *
+ * 此外除非系统属性secureRandomSeed设置为true，否则默认构造的实例不适用加密随机种子。
+ *
  * @since 1.7
  * @author Doug Lea
  */
+
+/**
+ * Random类存在的问题
+ *  for (int i = 0; i < 5; i++) {
+ *             Random random = new Random(111);
+ *             System.out.println(random.nextInt(100)); //每次都会输出相同的值 93，
+ *  }
+ *也就是说当种子固定时，生成的随机数是一样的。在next的源码中 生成随机数可以抽象为两步：（1）根据老的种子生成新的种子 （2）根据新的种子生成新的随机数
+ * 在单线程情况下每次调用 nextInt() 都是根据老的种子计算出新的种子，可以保证随机数产生的随机性。多线程环境下，
+ * 多个线程可能都拿到同一个老的种子去执行 next() 方法，由于生成随机数的算法是固定的，所以会导致多个线程产生相同的随机数。
+ *
+ * 为了保证多线程环境下产生的随机数是随机的，将种子值保存到了原子变量里，并通过 CAS 操作更新种子，保证了只有一个线程可以更新老的种子为新的，保证了生成的随机数的随机性。
+ *
+ * 总结&缺陷
+ * 总结:
+ * 每个 Random 实例里面都有一个原子性的种子变量 private final AtomicLong seed; 用来记录当前种子值，当要生成新的随机数时需要根据当前种子计算新的种子并更新回原子变量。
+ * 缺陷:
+ * 高并发情况下，大量线程同时竞争一个原子变量的更新，严重影响 CPU 性能，ThreadLocalRandom 应运而生。
+ *
+ *
+ *  Random 缺点是多个线程会使用同一个原子性种子变量，那么，如果每个线程都维护一个种子变量，
+ *              * 则每个线程生成随机数时都根据自己老的种子计算新的种子，并使用新种子更新老的种子，再根据新种子计
+ *              * 算随机数就不会存在竞争问题了。（跟 ThreadLocal 的思想很像）。
+ *              * 使用 ThreadLocalRandom 时，不能直接初始化，只能调用 current() 静态方法。
+ *
+ */
+
 public class ThreadLocalRandom extends Random {
     /*
      * This class implements the java.util.Random API (and subclasses
      * Random) using a single static instance that accesses random
      * number state held in class Thread (primarily, field
-     * threadLocalRandomSeed). In doing so, it also provides a home
+     * threadLocalRandomSeed).
+     * 此类实现Random ，使用访问随机的单个静态实例 线程类中保存的数字状态（主要字段 threadLocalRandomSeed）
+     *
+     * In doing so, it also provides a home
      * for managing package-private utilities that rely on exactly the
      * same state as needed to maintain the ThreadLocalRandom
-     * instances. We leverage the need for an initialization flag
+     * instances.
+     * 在这样做的同时，他还提供了一个家用于管理完全依赖于维持ThreadLocalRandom所需的相同状态实例。
+     *
+     * We leverage the need for an initialization flag
      * field to also use it as a "probe" -- a self-adjusting thread
      * hash used for contention avoidance, as well as a secondary
      * simpler (xorShift) random seed that is conservatively used to
      * avoid otherwise surprising users by hijacking the
-     * ThreadLocalRandom sequence.  The dual use is a marriage of
+     * ThreadLocalRandom sequence.
+     * 我们利用对初始化标志的需求字段也可以佳凝器用作探针- 自调整线程用于避免争用的哈希，以及辅助更简单的随机种子，保守
+     * 地用于通过劫持来避免让用户感到意外ThreadLocalRandom序列
+     *
+     * The dual use is a marriage of
      * convenience, but is a simple and efficient way of reducing
      * application-level overhead and footprint of most concurrent
      * programs.
+     *双重用途是方便，但是是是一种简单有效的减少方式，大多数并发的应用程序级开销和占用空间
      *
      * Even though this class subclasses java.util.Random, it uses the
      * same basic algorithm as java.util.SplittableRandom.  (See its
      * internal documentation for explanations, which are not repeated
      * here.)  Because ThreadLocalRandoms are not splittable
      * though, we use only a single 64bit gamma.
+     * 尽管这个类是 java.util.Random 的子类，但它使用
+     * 与 java.util.SplittableRandom 相同的基本算法。 （见其
+     * 内部文档说明，不再重复
+     * 这里。）因为 ThreadLocalRandoms 不可拆分
+     * 不过，我们只使用一个 64 位 gamma。
      *
      * Because this class is in a different package than class Thread,
      * field access methods use Unsafe to bypass access control rules.
+     * 因为这个类与Threa类在不同宝中，字段访问方法使用Unsafe绕过访问控制规则。
+     *
+     *
      * To conform to the requirements of the Random superclass
      * constructor, the common static ThreadLocalRandom maintains an
      * "initialized" field for the sake of rejecting user calls to
-     * setSeed while still allowing a call from constructor.  Note
+     * setSeed while still allowing a call from constructor.
+     * 符合Random超类的要求，构造函数，常见的静态ThreadLocalRandom维护一个初始化字段，用于拒绝用户调用setSeed
+     * 同时仍然允许从构造函数调用。
+     *  Note
      * that serialization is completely unnecessary because there is
-     * only a static singleton.  But we generate a serial form
+     * only a static singleton.
+     * 序列化是没有必要的，因为只有一个静态单例。
+     *   But we generate a serial form
      * containing "rnd" and "initialized" fields to ensure
      * compatibility across versions.
+     * 但是我们生成一个序列表包含 rnd和initialized字段以确保跨版本的兼容性。
      *
      * Implementations of non-core methods are mostly the same as in
      * SplittableRandom, that were in part derived from a previous
      * version of this class.
+     * * 非核心方法的实现与
+     * SplittableRandom，部分来自以前的
+     * 此类的版本。
      *
      * The nextLocalGaussian ThreadLocal supports the very rarely used
      * nextGaussian method by providing a holder for the second of a
      * pair of them. As is true for the base class version of this
      * method, this time/space tradeoff is probably never worthwhile,
      * but we provide identical statistical properties.
+     * * nextLocalGaussian ThreadLocal 支持很少使用的
+     * nextGaussian 方法通过提供第二个的持有者
+     * 一对。对于这个的基类版本也是如此
+     * 方法，这种时间/空间权衡可能永远不值得，
+     * 但我们提供相同的统计属性
+     *
      */
 
     /** Generates per-thread initialization/probe field */
@@ -207,6 +286,9 @@ public class ThreadLocalRandom extends Random {
         int p = probeGenerator.addAndGet(PROBE_INCREMENT);
         int probe = (p == 0) ? 1 : p; // skip 0
         long seed = mix64(seeder.getAndAdd(SEEDER_INCREMENT));
+        /**
+         * 为当前线程 设置 随机种子值
+         */
         Thread t = Thread.currentThread();
         UNSAFE.putLong(t, SEED, seed);
         UNSAFE.putInt(t, PROBE, probe);
@@ -214,13 +296,18 @@ public class ThreadLocalRandom extends Random {
 
     /**
      * Returns the current thread's {@code ThreadLocalRandom}.
+     *ThreadLocalRandom 中并没有存放具体的种子，具体的种子存放在具体的调用线程中。当前线程第一次调用 current() 方法时，
+     * 会初始化当前线程的 threadLocalRandomSeed 变量。
      *
      * @return the current thread's {@code ThreadLocalRandom}
      */
     public static ThreadLocalRandom current() {
         if (UNSAFE.getInt(Thread.currentThread(), PROBE) == 0)
+        /**
+         * 说明当前线程第一次调用ThreadLocalRandom的current方法，那么就需要调用localInit方法计算当前线程的初始化种子变量。这里设计为了延迟初始化，不需要使用随机数功能时候Thread类中的种子变量就不需要被初始化，这是一种优化。
+         */
             localInit();
-        return instance;
+        return instance;//返回ThreadLocalRandom的实例，需要注意的是这个方法是静态方法，多个线程返回的是同一个ThreadLocalRandom实例。
     }
 
     /**
@@ -347,8 +434,25 @@ public class ThreadLocalRandom extends Random {
      * @throws IllegalArgumentException if {@code bound} is not positive
      */
     public int nextInt(int bound) {
+
         if (bound <= 0)
             throw new IllegalArgumentException(BadBound);
+        /**
+         * 这里调用了 nextSeed: UNSAFE.getLong(t, SEED) 获得当前线程的 threadLocalRandomSeed 的值，再将其加上 GAMMA (一个定值) 作为新种子的值，并更新到当前线程中。
+         *
+         * ThreadLocalRandom 使用 ThreadLocal 的原理，让每个线程都持有一个本地的种子变量，该种子变量只有在使用随机数时才会被初始化。
+         * 在多线程下计算新种子时是根据自己线程内维护的种子变量进行更新，从而避免了竞争。
+         *
+         *
+         * ======
+         * https://juejin.cn/post/6844904174186921997
+         * 关于使用ThreadLocal来减少竞争的问题：在Java中生成随机数可以使用Random对象，Random对象在生成随机数的时候是先根据旧的种子生成新的种子，
+         * 然后根据新的种子生成随机数。 多线程使用相同的种子生成的随机数是相同的。  为了实现多线程生成随机数的随机性，
+         * 使用cas操作来确保只有一个线程生成的新的种子是有效的。（也就是说两个线程都 使用相同的旧的种子 生成相同的新的种子，生成了相同的随机数，
+         * 但是他们在将随机数返回之前 会使用cas操作 更新旧的种子为 新的种子，这个更新操作只会有一个线程能够完成，更新完成的线程生成的新的随机数有效）。因此在多线程情况下条Random的竞争比较大。
+         * 优化方案就是 Thread对象本身内部保存种子值，在多线程下计算新种子时是根据自己线程内维护的种子变量进行更新，从而避免了竞争，ThreadLocalRandom 使用 ThreadLocal 的原理
+         *
+         */
         int r = mix32(nextSeed());
         int m = bound - 1;
         if ((bound & m) == 0) // power of two

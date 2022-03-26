@@ -78,10 +78,34 @@ class Random implements java.io.Serializable {
     /** use serialVersionUID from JDK 1.1 for interoperability */
     static final long serialVersionUID = 3905348978240129619L;
 
+
+    /**
+     * Random类存在的问题
+     * https://juejin.cn/post/6844904174186921997
+     *  for (int i = 0; i < 5; i++) {
+     *             Random random = new Random(111);
+     *             System.out.println(random.nextInt(100)); //每次都会输出相同的值 93，
+     *  }
+     *也就是说当种子固定时，生成的随机数是一样的。在next的源码中 生成随机数可以抽象为两步：（1）根据老的种子生成新的种子 （2）根据新的种子生成新的随机数
+     * 在单线程情况下每次调用 nextInt() 都是根据老的种子计算出新的种子，可以保证随机数产生的随机性。多线程环境下，
+     * 多个线程可能都拿到同一个老的种子去执行 next() 方法，由于生成随机数的算法是固定的，所以会导致多个线程产生相同的随机数。
+     *
+     * 为了保证多线程环境下产生的随机数是随机的，将种子值保存到了原子变量里，并通过 CAS 操作更新种子，保证了只有一个线程可以更新老的种子为新的，保证了生成的随机数的随机性。
+     *
+     * 总结&缺陷
+     * 总结:
+     * 每个 Random 实例里面都有一个原子性的种子变量 private final AtomicLong seed; 用来记录当前种子值，当要生成新的随机数时需要根据当前种子计算新的种子并更新回原子变量。
+     * 缺陷:
+     * 高并发情况下，大量线程同时竞争一个原子变量的更新，严重影响 CPU 性能，ThreadLocalRandom 应运而生。
+     *
+     *
+     *
+     */
     /**
      * The internal state associated with this pseudorandom number generator.
      * (The specs for the methods in this class describe the ongoing
      * computation of this value.)
+     *
      */
     private final AtomicLong seed;
 
@@ -197,11 +221,55 @@ class Random implements java.io.Serializable {
      */
     protected int next(int bits) {
         long oldseed, nextseed;
+
         AtomicLong seed = this.seed;
         do {
+            /**
+             * 获取当前的种子值， 根据当前种子计算出新的种子值
+             *
+             */
             oldseed = seed.get();
             nextseed = (oldseed * multiplier + addend) & mask;
+            /**
+             * cas更新操作，保证多线程环境下产生}的随机数是随机的。
+             *
+             * Random的缺点：
+             *
+             *随机数的生成可以抽象成两步:
+             *
+             * 根据老的种子生成新的种子
+             * 根据新的总子生成新的随机数
+             *
+             * 在单线程情况下每次调用 nextInt() 都是根据老的种子计算出新的种子，可以保证随机数产生的随机性。多线程环境下，多个线程可能都拿
+             * 到同一个老的种子去执行 next() 方法，由于生成随机数的算法是固定的，所以会导致多个线程产生相同的随机数。
+             * 为了保证多线程环境下产生的随机数是随机的，将种子值保存到了原子变量里，并通过 CAS 操作更新种子，保证了只有一个线程可以更新
+             * 老的种子为新的，保证了生成的随机数的随机性。
+             *
+             * 总结&缺陷
+             * 总结:
+             * 每个 Random 实例里面都有一个原子性的种子变量 private final AtomicLong seed; 用来记录当前种子值，
+             * 当要生成新的随机数时需要根据当前种子计算新的种子并更新回原子变量。
+             * 缺陷:
+             * 高并发情况下，大量线程同时竞争一个原子变量的更新，严重影响 CPU 性能，ThreadLocalRandom 应运而生。
+             *
+             * 引出新的类 ThreadLocalRandom
+             *
+             * Random 缺点是多个线程会使用同一个原子性种子变量，那么，如果每个线程都维护一个种子变量，
+             * 则每个线程生成随机数时都根据自己老的种子计算新的种子，并使用新种子更新老的种子，再根据新种子计
+             * 算随机数就不会存在竞争问题了。（跟 ThreadLocal 的思想很像）。
+             * 使用 ThreadLocalRandom 时，不能直接初始化，只能调用 current() 静态方法。
+             *
+             * ===============
+             *  * https://juejin.cn/post/6844904174186921997
+             *          * 关于使用ThreadLocal来减少竞争的问题：在Java中生成随机数可以使用Random对象，Random对象在生成随机数的时候是先根据旧的种子生成新的种子，
+             *          * 然后根据新的种子生成随机数。 多线程使用相同的种子生成的随机数是相同的。  为了实现多线程生成随机数的随机性，
+             *          * 使用cas操作来确保只有一个线程生成的新的种子是有效的。（也就是说两个线程都 使用相同的旧的种子 生成相同的新的种子，生成了相同的随机数，
+             *          * 但是他们在将随机数返回之前 会使用cas操作 更新旧的种子为 新的种子，这个更新操作只会有一个线程能够完成，更新完成的线程生成的新的随机数有效）。因此在多线程情况下条Random的竞争比较大。
+             *          * 优化方案就是 Thread对象本身内部保存种子值，在多线程下计算新种子时是根据自己线程内维护的种子变量进行更新，从而避免了竞争，ThreadLocalRandom 使用 ThreadLocal 的原理
+             *
+             */
         } while (!seed.compareAndSet(oldseed, nextseed));
+        //使用固定的算法，根据新的种子值生成随机数
         return (int)(nextseed >>> (48 - bits));
     }
 
@@ -387,7 +455,11 @@ class Random implements java.io.Serializable {
         if (bound <= 0)
             throw new IllegalArgumentException(BadBound);
 
+        /**
+         * 根据旧的seed升级成新的seed，并生成随机数r
+         */
         int r = next(31);
+        //固定算法
         int m = bound - 1;
         if ((bound & m) == 0)  // i.e., bound is a power of 2
             r = (int)((bound * (long)r) >> 31);
