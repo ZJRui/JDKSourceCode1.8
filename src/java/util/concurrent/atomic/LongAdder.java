@@ -54,6 +54,11 @@ import java.io.Serializable;
  * as collecting statistics, not for fine-grained synchronization
  * control.
  * 当多个线程更新用于手机通信信息等目的的公共总和时，此类通常比AtomicLong更可取，而不是用于细粒度的同步控制，
+ * LongAdder在一些高并发场景下表现要比AtomicLong好，比如多个线程同时更新一个求和的变量，比如统计集合的数量，但是不能用于细粒度同步控制，
+ * 换句话说这个是可能有误差的（因为更新与读取是并行的）。在低并发场景场景下LongAdder和AtomicLong的性能表现没什么差别，但是当高并发竞争的时候，这个类将具备更好的吞吐性能，但是相应的也会耗费相当的空间。
+ *
+ *
+ *
  * Under low update contention, the two classes have similar
  * characteristics. But under high contention, expected throughput of
  * this class is significantly higher, at the expense of higher space
@@ -81,6 +86,19 @@ import java.io.Serializable;
  * @author Doug Lea
  */
 public class LongAdder extends Striped64 implements Serializable {
+    /**
+     *
+     * 为什么会出现上面的情况？这是因为 AtomicInteger 在高并发环境下会有多个线程去竞争一个原子变量，
+     * 而始终只有一个线程能竞争成功，而其他线程会一直通过 CAS 自旋尝试获取此原子变量，因此会有一定的性能消耗；而 LongAdder
+     * 会将这个原子变量分离成一个 Cell 数组，每个线程通过 Hash 获取到自己数组，这样就减少了乐观锁的重试次数，从而在高竞争下获得优势；
+     * 而在低竞争下表现的又不是很好，可能是因为自己本身机制的执行时间大于了锁竞争的自旋时间，因此在低竞争下表现性能不如 AtomicInteger。
+     *
+     *LongAccumulator相比于LongAdder，可以为累加器提供非0的初始值，而LongAdder只能提供默认的0值。
+     * 另外，LongAccumulator还可以指定累加规则，比如累加或者相乘，只需要在构造LongAccumulator时，
+     * 传入自定义的双目运算器即可，后者则内置累加规则。
+     *
+     *
+     */
     private static final long serialVersionUID = 7249069246863182397L;
 
     /**
@@ -147,7 +165,7 @@ public class LongAdder extends Striped64 implements Serializable {
      * updates returns an accurate result, but concurrent updates that
      * occur while the sum is being calculated might not be
      * incorporated.
-     *
+     *当在sum的过程中，有可能别的线程正在操作cells（因为没有加锁） ,sum取的值，不一定准确
      * @return the sum
      */
     public long sum() {

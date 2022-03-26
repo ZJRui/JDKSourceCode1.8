@@ -188,6 +188,10 @@ abstract class Striped64 extends Number {
      * form of CAS here, if it were provided.
      * JVM内部函数注意： 如果提供了cas，则可以在此处使用仅发布形式的cas。
      *
+     * 注意Cell类 使用了Contended注解 来对齐填充
+     * 表格内的元素是Cell类，Cell类是一个为了减少缓存争用而填充的AtomicLong的变种。填充对于大多数原子来说是多余的，
+     * 因为它们通常不规则地分散在内存中，因此彼此之间不会有太多的干扰。但是，驻留在数组中的原子对象往往是彼此相邻的，因此在没有这种预防措施的情况下，最常见的情况是共享高速缓存线(这对性能有很大的负面影响)。
+     *
      */
     @sun.misc.Contended static final class Cell {
         volatile long value;
@@ -224,6 +228,8 @@ abstract class Striped64 extends Number {
      * 这时使用base做累加，有了竞争后cells数组就上场了，第一次初始化长度为2，以后每次扩容都是变为原来的两倍，
      * 直到cells数组的长度大于等于当前服务器cpu的数量为止就不在扩容；每个线程会通过线程对cells[threadLocalRandomProbe%cells.length]
      * 位置的Cell对象中的value做累加，这样相当于将线程绑定到了cells中的某个cell对象上；
+     *
+     * 分散热点，将value值分散到一个数组中，不同线程会命中到数组的不同槽中，各个线程只对自己槽中的那个值进行CAS操作，这样热点就被分散了，冲突的概率就小很多。如果要获取真正的long值，只要将各个槽中的变量值累加返回。
      *
      */
     transient volatile Cell[] cells;
@@ -329,7 +335,7 @@ abstract class Striped64 extends Number {
          *         //2.或者是在执行add方法时，对cells某个位置的Cell的cas操作第一次失败，则将wasUncontended设置为false，那么这里会将其重新置为true；第一次执行操作失败；
          *        //凡是参与了cell争用操作的线程threadLocalRandomProbe都不为0；
          *
-         *
+         *通过ThreadLocalRandom维护的Thread.probe字段用作每个线程的哈希码。我们让它们保持未初始化（为零）(如果它们以这种方式出现)，直到它们在插槽0竞争
          */
         if ((h = getProbe()) == 0) {
             /**
@@ -421,11 +427,12 @@ abstract class Striped64 extends Number {
                     break;
                 /**
                  * 内部小分支四：分支3处理新的线程争用执行失败了，这时如果cells数组的长度已经到了最大值（大于等于cup数量），
-                 * 或者是当前cells已经做了扩容，则将collide设置为false，后面重新计算prob的值
+                 * 或者是当前cells已经做了扩容，则将collide设置为false，后面重新计算prob的值.
+                 * cells != as表明cells数组已经被更新了
                  */
                 else if (n >= NCPU || cells != as)
                 /**
-                 * collide:碰撞
+                 * collide:碰撞.标记为最大状态或者说是过期状态
                  */
                     collide = false;            // At max size or stale
                 /**
@@ -476,6 +483,10 @@ abstract class Striped64 extends Number {
             }
             /**
              *如果以上操作都失败了，则尝试将值累加到base上；
+             *
+             * 总结就是： 如果cells已经被初始化了那么 就获取线程对应的cell，将数值累加到cell上。
+             * 如果cells没有初始化 则获取cellsBusy锁 对 cells进行初始化，并将值放置到cell中。
+             * 如果获取锁失败了则将值累加到base中。
              */
             else if (casBase(v = base, ((fn == null) ? v + x :
                                         fn.applyAsLong(v, x))))

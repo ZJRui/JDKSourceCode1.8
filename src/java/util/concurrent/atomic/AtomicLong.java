@@ -116,6 +116,38 @@ public class AtomicLong extends Number implements java.io.Serializable {
 
     /**
      * Eventually sets to the given value.
+     *最终设置为给定值。
+     * J.U.C原子工具类AtomicXXX中，set和lazySet的区别:https://blog.csdn.net/aitangyong/article/details/41577503
+     *
+     * 按照javadoc的字面意思：set()会立刻修改旧值，别的线程可以立刻看到更新后的值；而lazySet不会立刻(但是最终会)修改旧值，
+     * 别的线程看到新值的时间会延迟一些。JDK bug database上有对lazySet的详细描述：
+     * http://bugs.java.com/bugdatabase/view_bug.do?bug_id=7065550
+     *
+     * http://bugs.java.com/bugdatabase/view_bug.do?bug_id=6275329
+     * As probably the last little JSR166 follow-up for Mustang, we added a "lazySet" method to the Atomic classes (AtomicInteger, AtomicReference, etc). This is a niche method that is sometimes useful when fine-tuning code using non-blocking data structures. The semantics are that the write is guaranteed not to be re-ordered with any previous write, but may be reordered with subsequent operations (or equivalently, might not be visible to other threads) until some other volatile write or synchronizing action occurs).
+     *
+     * The main use case is for nulling out fields of nodes in non-blocking data structures solely for the sake of avoiding long-term garbage retention; it applies when it is harmless if other threads see non-null values for a while, but you'd like to ensure that structures are eventually GCable. In such cases, you can get better performance by avoiding the costs of the null volatile-write. There are a few other use cases along these lines for non-reference-based atomics as well, so the method is supported across all of the AtomicX classes.
+     *
+     * For people who like to think of these operations in terms of machine-level barriers on common multiprocessors, lazySet provides a preceeding store-store barrier (which is either a no-op or very cheap on current platforms), but no store-load barrier (which is usually the expensive part of a volatile-write).
+     *
+     *
+     * set()和volatile具有一样的效果(能够保证内存可见性，能够避免指令重排序)，但是使用lazySet不能保证其他线程能立刻看到修改后的值(有可能发生指令重排序)。简单点理解：lazySet比set()具有性能优势，但是使用场景很有限。在网上没有找到lazySet和set的性能数据对比，而且CPU的速度很快的，应用的瓶颈往往不在CPU，而是在IO、网络、数据库等。对于并发程序要优先保证正确性，然后出现性能瓶颈的时候再去解决。因为定位并发导致的问题，往往要比定位性能问题困难很多。
+     *
+     * 在stackoverflow上，也有很人提问set和lazySet的问题：
+     *
+     * http://stackoverflow.com/questions/1468007/atomicinteger-lazyset-vs-set
+     *
+     * http://stackoverflow.com/questions/25840733/atomic-integer-lazyset-performance-gains
+     *
+     * http://stackoverflow.com/questions/7557156/atomicxxx-lazyset-in-terms-of-happens-before-edges
+     *
+     * ==================
+     * lazySet是使用Unsafe.putOrderedObject方法，这个方法在对低延迟代码是很有用的，它能够实现非阻塞的写入，
+     * 这些写入不会被Java的JIT重新排序指令(instruction reordering)，这样它使用快速的存储-存储(store-store) barrier,
+     * 而不是较慢的存储-加载(store-load) barrier, 后者总是用在volatile的写操作上，这种性能提升是有代价的，虽然便宜，也就是写
+     * 后结果并不会被其他线程看到，甚至是自己的线程，通常是几纳秒后被其他线程看到，这个时间比较短，所以代价可以忍受。
+     * 设想如下场景: 设置一个 volatile 变量为 null，让这个对象被 GC 掉，volatile write 是消耗比较大（store-load 屏障）的，
+     * 但是 putOrderedInt 只会加 store-store 屏障，损耗会小一些。
      *
      * @param newValue the new value
      * @since 1.6
