@@ -1106,6 +1106,13 @@ public class Thread implements Runnable {
     /**
      * 使该方法的调用者所在的线程进入 WAITING 或 TIMED_WAITING 状态，直到当前线程死亡，或者等待超时之后，再去执行上述调用者线程
      *
+     * Waits at most millis milliseconds for this thread to die. A timeout of 0 means to wait forever.
+     * This implementation uses a loop of this.wait calls conditioned on this.isAlive. As a thread terminates
+     * the this.notifyAll method is invoked. It is recommended that applications not use wait, notify, or notifyAll on Thread instances.
+     * * 最多等待几毫秒让该线程终止。 超时 0 意味着永远等待。
+     *       * 此实现使用以 this.isAlive 为条件的 this.wait 调用循环。 作为一个线程终止
+     *       * this.notifyAll 方法被调用。 建议应用程序不要在 Thread 实例上使用 wait、notify 或 notifyAll。
+     *
      * @param millis 等待时间
      * @throws IllegalArgumentException if the value of {@code millis} is negative
      * @throws InterruptedException     if any thread has interrupted the current thread. The
@@ -1125,7 +1132,11 @@ public class Thread implements Runnable {
             // NEW false
             // RUNNABLE true
             while (isAlive()) {
-                // 等待其他线程,一直等待
+                /**
+                 * wait方法是Object类中的方法， 调用wait方法需要获取到当前对象的锁，因此 join方法是synchronized
+                 * wait方法会阻塞当前的线程。 当前线程被唤醒是 通过  threadA.join() 这个threadA对象调用了 当前线程对象的notifyAll方法来唤醒当前线程。
+                 * 调用notifyAll方法是在JVM中实现的。所以JDK里面看不到。 大体上可以理解为 threadA的run方法最后 会 调用的当前线程对象的notifyAll方法。
+                 */
                 wait(0);
             }
         } else {
