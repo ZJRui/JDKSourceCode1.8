@@ -31,19 +31,23 @@ import sun.misc.Unsafe;
 
 /**
  * A direct byte buffer whose content is a memory-mapped region of a file.
- *
+ *一个直接字节缓冲区，其内容是文件的内存映射区域。
  * <p> Mapped byte buffers are created via the {@link
  * java.nio.channels.FileChannel#map FileChannel.map} method.  This class
  * extends the {@link ByteBuffer} class with operations that are specific to
  * memory-mapped file regions.
+ * <p>映射字节缓冲区是通过 FileChannel.map 方法创建的。 此类使用特定于内存映射文件区域的操作扩展 ByteBuffer 类。<p/>
  *
  * <p> A mapped byte buffer and the file mapping that it represents remain
  * valid until the buffer itself is garbage-collected.
+ *
  *
  * <p> The content of a mapped byte buffer can change at any time, for example
  * if the content of the corresponding region of the mapped file is changed by
  * this program or another.  Whether or not such changes occur, and when they
  * occur, is operating-system dependent and therefore unspecified.
+ *
+ * <p>映射字节缓冲区的内容可以随时更改，例如，如果该程序或其他程序更改了映射文件的相应区域的内容。 此类更改是否发生以及何时发生取决于操作系统，因此未指定。</p>
  *
  * <a name="inaccess"></a><p> All or part of a mapped byte buffer may become
  * inaccessible at any time, for example if the mapped file is truncated.  An
@@ -53,9 +57,13 @@ import sun.misc.Unsafe;
  * therefore strongly recommended that appropriate precautions be taken to
  * avoid the manipulation of a mapped file by this program, or by a
  * concurrently running program, except to read or write the file's content.
+ *<p>映射字节缓冲区的全部或部分可能在任何时候变得不可访问，例如，如果映射文件被截断。 访问映射字节缓冲区的不可访问区域的
+ * 尝试不会更改缓冲区的内容，并且会导致在访问时或稍后的某个时间抛出未指定的异常。 因此，强烈建议采取适当的预防措施，以避免
+ * 该程序或同时运行的程序对映射文件的操作，除非读取或写入文件的内容。<p/>
  *
  * <p> Mapped byte buffers otherwise behave no differently than ordinary direct
  * byte buffers. </p>
+ * <p>映射字节缓冲区的行为与普通的直接字节缓冲区没有区别。</p>
  *
  *
  * @author Mark Reinhold
@@ -122,6 +130,28 @@ import sun.misc.Unsafe;
 public abstract class MappedByteBuffer
     extends ByteBuffer
 {
+
+    /**
+     *
+     *
+     * * <p>映射的字节缓冲区和它所代表的文件映射在缓冲区本身被垃圾收集之前保持有效。(从这个地方 隐约感觉到  是 文件 映射到 用户进程内存的空间)
+     *  *
+     *  * 内存映射： mmap是一种内存映射文件的方法，即将一个文件或者其它对象映射到进程的地址空间，实现文件磁盘地址和进程虚拟地址空间中一段虚拟地址的一一对映关系。
+     *  * 实现这样的映射关系后，进程就可以采用指针的方式读写操作这一段内存，而系统会自动回写脏页面到对应的文件磁盘上，即完成了对文件的操作而不必再调用read,write等系统调用函数
+     *  *
+     *  * mmap 把文件内容映射到以 start 地址开始的长度为 length 字节的内存空间上。而被映
+     *  * 射到内存上的文件的范围则是：由文件描述符 fd 指定的文件中，从偏移量 offset 开始，长度
+     *  * 为 length 字节的部分。
+     *  * mmap 系统调用的返回值为实际映射到的内存空间的起始地址。内存分配失败时会返回常量
+     *  * MAP_FAILED。
+     *  *
+     *  * FileChannel.map的方法会返回一个 MappedByteBuffer 对象，map方法中 调用了 native map0 方法，这个native方法的实现 在FileChannelImpl.c文件中 Java_sun_nio_ch_FileChannelImpl_map0方法
+     *  * 调用了 mmap64这个方法，mmap64和mmap等价，也就是 mmap系统调用。
+     *  *
+     *  *
+     *  * </p>
+     *
+     */
 
 
 
