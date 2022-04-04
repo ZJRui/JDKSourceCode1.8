@@ -173,7 +173,11 @@ public abstract class Reference<T> {
      * 	注意：一旦当前Reference对象进入到其属性queue所指定的ReferenceQueue中，那么当前Reference对象的queue属性就会被设置为java.lang.ref.ReferenceQueue#ENQUEUED
      * 	这个逻辑是在ReferenceQueue的enqueue方法中实现的。
      *
-     *
+     *=============
+     * 关于引用队列 有什么作用
+     * 当引用对象关联的对象不可达的时候（当对象的可达性发生改变（不再可达，一般是被引用的对象被gc）的某个时间后），JVM会把Reference设置成pending状态，所有处于pending状态的引用会形成一个链表，这条链表由GC维护。
+     *  Reference引用类中的静态代码块 会启动一个ReferenceHandler线程，这个线程会不断的从pending队列中取出Reference对象，如果这个引用对象是特殊的cleaner引用对象则调用其clean方法，在clean方法中释放堆外内存的占用。 针对其他类型的引用对象将这个引用对象放入到引用队列中。
+     * ReferenceHandler线程在处理引用时会调用clean方法，同时会将这个引用对象加入到用户创建的引用队列中，一般用户会启动一个线程处理这个引用队列中的引用，从而实现虚拟机回收引用时通知用户。比如Finalizer类是一个FinalReference，Finalizer类会启动一个FinalizerThread线程，这个线程会从队列中取出引用（Finalizer f = (Finalizer)queue.remove();），获取到引用关联的对象，然后调用对象的finalize方法。（）
      *
      */
     volatile ReferenceQueue<? super T> queue;

@@ -91,6 +91,24 @@ public class Cleaner extends PhantomReference<Object> {
                  * 在DirectByteBuffer中创建Cleaner的时候指定了 Deallocator 作为thunk
                  *   cleaner = Cleaner.create(this, new Deallocator(base, size, cap));
                  *   在Deallocator类中会执行 内存释放：  unsafe.freeMemory(address);
+                 *
+                 *
+                 *   ==============
+                 * 补充内容 clear方法和clean方法
+                 * Reference类中定义了一个clear方法，会将引用关联的目标对象设置为空，这个clear方法不是被虚拟机调用的，而是
+                 * 用户调用，比如我们将缓存设置为无效的时候  需要将 引用对象关联的目标对象设置为null，从而废弃这个引用对象。
+                 *
+                 *Cleaner是PhantomReference引用的子类，他定义了一个clean方法，clean方法中会执行业务逻辑Runnable，在
+                 * DirectByteBuffer的实现中这个业务逻辑就是释放堆外内存， 这个clean方法的调用是在ReferenceHandler线程 中从
+                 * Pending队列中取出引用，如果这个引用是Cleaner 就会执行器clean方法，可见clean方法执行时机是虚拟机控制的，而不是我们手动调用。
+                 *
+                 * =====================
+                 * 关于引用队列有什么作用
+                 * 当引用对象关联的对象不可达的时候（当对象的可达性发生改变（不再可达，一般是被引用的对象被gc）的某个时间后），JVM会把Reference设置成pending状态，所有处于pending状态的引用会形成一个链表，这条链表由GC维护。
+                 *  Reference引用类中的静态代码块 会启动一个ReferenceHandler线程，这个线程会不断的从pending队列中取出Reference对象，如果这个引用对象是特殊的cleaner引用对象则调用其clean方法，在clean方法中释放堆外内存的占用。 针对其他类型的引用对象将这个引用对象放入到引用队列中。
+                 * ReferenceHandler线程在处理引用时会调用clean方法，同时会将这个引用对象加入到用户创建的引用队列中，一般用户会启动一个线程处理这个引用队列中的引用，从而实现虚拟机回收引用时通知用户。比如Finalizer类是一个FinalReference，Finalizer类会启动一个FinalizerThread线程，这个线程会从队列中取出引用（Finalizer f = (Finalizer)queue.remove();），获取到引用关联的对象，然后调用对象的finalize方法。（）
+                 *
+                 *
                  */
                 this.thunk.run();
             } catch (final Throwable var2) {
