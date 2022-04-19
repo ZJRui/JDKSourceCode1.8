@@ -616,13 +616,38 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         /** Per-thread task counter */
         volatile long completedTasks;
 
-        /**
-         * Creates with given first task and thread from ThreadFactory.
-         * @param firstTask the first task (null if none)
+        /***
+         *
+         * Worker类继承了AQS，使用AQS来实现独占锁的功能。
+         * 为什么不使用ReentrantLock来实现？可以看到tryAcquire方法，他是不允许重入的，
+         * 而ReentrantLock是允许可重入的：
+         * 1、lock方法一旦获取独占锁，表示当前线程正在执行任务中；
+         * 2、如果正在执行任务，则不应该中断线程；
+         * 3、如果该线程现在不是独占锁的状态，也就是空闲状态，说明它没有处理任务，这时可以对该线程进行中断；
+         * 4、线程池中执行shutdown方法或tryTerminate方法时会调用interruptIdleWorkers方法来中断空闲线程，
+         * interruptIdleWorkers方法会使用tryLock方法来判断线程池中的线程是否是空闲状态；
+         * 5、之所以设置为不可重入的，是因为在任务调用setCorePoolSize这类线程池控制的方法时，不
+         * 会中断正在运行的线程所以，Worker继承自AQS，用于判断线程是否空闲以及是否处于被中断。
+         *
+         *
+         * 问题： Worker作为一个Runnable ，交给自己的 thread属性执行 ，为什么Worker要基于AQS实现锁的功能？
+         *
          */
         Worker(Runnable firstTask) {
-            setState(-1); // inhibit interrupts until runWorker
+            /**
+             * Worker类继承了AQS并实现了Runnable接口,把state设置为-1，,阻止中断直到调用runWorker方法；
+             *  因为AQS默认state是0，如果刚创建一个Worker对象，还没有执行任务时，这时候不应该被中断
+             *
+             */
+            setState(-1); // inhibit interrupts until runWorker 禁止中断直到 runWorker
+            /**
+             * firstTask用来保存传入的任务，thread是在调用构造方法是通过ThreadFactory来创建的线程，是用来处理任务的线程。
+             */
             this.firstTask = firstTask;
+            /**
+             * 创建一个线程，newThread方法传入的参数是this，因为Worker本身继承了Runnable接口，也就是一个线程；
+             * 所以一个Worker对象在启动的时候会调用Worker类中run方法
+             */
             this.thread = getThreadFactory().newThread(this);
         }
 
@@ -641,6 +666,20 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         }
 
         protected boolean tryAcquire(int unused) {
+
+            /**
+             * cas修改state，不可重入，只有一个线程获取成功，且获取成功的线程不可再次获取。
+             * state根据0来判断，所以worker构造方法中假尼姑state设置为-1 是为了禁止在执行任务前对线程进行中断。
+             * 因此在runWorker方法中会先调用worker对象的unlock方法将state设置为0.
+             *
+             * Worker对象的tryAcquire方法是在 ThreadPoolExecutor的interruptIdleWorkers方法和tryTerminate方法中 调用了interruptIdleWorkers
+             * 在这个interruptIdleWorkers 方法中 ，遍历每一个Woker对象 调用其tryLock方法，如果获取成功则调用 Worker对象的Thread属性的interrupt方法 ，
+             * 从而实现对woker线程进行中断。
+             *
+             * 那么问题是： 为什么 在终止 Woker的Thread线程之前需要先获取到Worker对象的AQS锁的呢？
+             *
+             *
+             */
             if (compareAndSetState(0, 1)) {
                 setExclusiveOwnerThread(Thread.currentThread());
                 return true;
@@ -793,6 +832,14 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * waiting for a straggler task to finish.
      */
     private void interruptIdleWorkers(boolean onlyOne) {
+        /**
+         * 中断可能正在等待任务的线程（如未锁定所示），以便它们可以检查终止或配置更改。 忽略 SecurityExceptions（在这种情况下，某些线程可能保持不间断）。
+         * 参数：
+         * onlyOne - 如果为 true，则最多中断一名工作人员。 这仅在以其他方式启用终止但仍有其他工作人员时从 tryTerminate 调用。
+         * 在这种情况下，在所有线程当前都在等待的情况下，最多会中断一个等待的工作人员以传播关闭信号。
+         * 中断任意线程可确保自关闭开始后新到达的工作人员最终也将退出。 为了保证最终终止，总是只中断一个空闲的worker就足够了，但是shutdown()会中断所有空闲的worker，这样多余的worker就会立即退出，而不是等待一个落后的任务完成。
+         *
+         */
         final ReentrantLock mainLock = this.mainLock;
         mainLock.lock();
         try {
@@ -908,16 +955,36 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
     private boolean addWorker(Runnable firstTask, boolean core) {
         retry:
         for (;;) {
+            /**
+             * 由于线程执行过程中，各种情况都有可能处于，通过for自旋的方式来保证worker的增加；
+             */
             int c = ctl.get();
+            //获取线程池运行状态
             int rs = runStateOf(c);
 
             // Check if queue empty only if necessary.
+            /**
+             *
+             * 如果rs >= SHUTDOWN, 则表示此时不再接收新任务；
+             * 接下来是三个条件 通过 && 连接，只要有一个任务不满足，就返回false；
+             * 1.rs == SHUTDOWN，表示关闭状态，不再接收提交的任务，但却可以继续处理阻塞队列中已经保存的任务；
+             * 2.fisrtTask为空
+             * 3.Check if queue empty only if necessary.
+             */
+
             if (rs >= SHUTDOWN && !(rs == SHUTDOWN && firstTask == null && !workQueue.isEmpty())) {
                 return false;
             }
 
             for (;;) {
+                //获取线程池的线程数
                 int wc = workerCountOf(c);
+                /**
+                 * 如果线程数 >= CAPACITY， 也就是ctl的低29位的最大值，则返回false；
+                 * 这里的core用来判断 限制线程数量的上限是corePoolSize还是maximumPoolSize；
+                 * 如果core是ture表示根据corePoolSize来比较；
+                 * 如果core是false表示根据maximumPoolSize来比较；
+                 */
                 if (wc >= CAPACITY ||
                     wc >= (core ? corePoolSize : maximumPoolSize))
                     return false;
@@ -937,6 +1004,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                 if (compareAndIncrementWorkerCount(c))
                     break retry;
                 c = ctl.get();  // Re-read ctl
+                //如果当前运行的状态不等于rs，说明线程池的状态已经改变了，则返回第一个for循环继续执行
                 if (runStateOf(c) != rs)
                     continue retry;
                 // else CAS failed due to workerCount change; retry inner loop
@@ -947,7 +1015,9 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         boolean workerAdded = false;
         Worker w = null;
         try {
+            //根据firstTask来创建Worker对象
             w = new Worker(firstTask);
+            //每一个Worker对象都会创建一个线程
             final Thread t = w.thread;
             if (t != null) {
                 final ReentrantLock mainLock = this.mainLock;
@@ -956,14 +1026,26 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                     // Recheck while holding lock.
                     // Back out on ThreadFactory failure or if
                     // shut down before lock acquired.
+                    // 持有锁时重新检查。
+                    // 如果 ThreadFactory 失败或如果
+                    // 在获取锁之前关闭。
+                    // 获取线程池的状态
                     int rs = runStateOf(ctl.get());
 
+                    /**
+                     * 线程池的状态小于Shutdown，表示线程池处于Running状态。
+                     * 如果rs是running状态或rs是shutdown状态并且firstTask为null，则向线程池中添加线程。
+                     * 因为在shutdown状态时不会添加新任务，但是还会处理workQueue中的任务。
+                     * firstTask==null表示 任务已经在之前被添加到了队列中。
+                     */
                     if (rs < SHUTDOWN ||
                         (rs == SHUTDOWN && firstTask == null)) {
                         if (t.isAlive()) // precheck that t is startable
                             throw new IllegalThreadStateException();
+                        //workers是一个hashSet
                         workers.add(w);
                         int s = workers.size();
+                        //largestPoolSize记录线程池中出现的最大的线程数量
                         if (s > largestPoolSize)
                             largestPoolSize = s;
                         workerAdded = true;
@@ -1102,6 +1184,9 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * Main worker run loop.  Repeatedly gets tasks from queue and
      * executes them, while coping with a number of issues:
      *
+     * 主工作者运行循环。 反复从队列中获取任务并
+     * 执行它们，同时处理一些问题：
+     *
      * 1. We may start out with an initial task, in which case we
      * don't need to get the first one. Otherwise, as long as pool is
      * running, we get tasks from getTask. If it returns null then the
@@ -1110,15 +1195,33 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * external code, in which case completedAbruptly holds, which
      * usually leads processWorkerExit to replace this thread.
      *
+     * 1. 我们可能从一个初始任务开始(比如创建Worker的时候给这个worker传递了一个任务)，在这种情况下，我们
+     * 不需要从队列中获得第一个。 否则，只要池是
+     * 运行时，我们从 getTask 获取任务。 如果它返回 null 然后
+     * 由于更改池状态或配置，工作人员退出
+     * 参数。 其他退出是由异常引发引起的
+     * 外部代码，在这种情况下 completedAbruptly 成立，其中
+     * 通常会导致 processWorkerExit 替换这个线程。
+     *
      * 2. Before running any task, the lock is acquired to prevent
      * other pool interrupts while the task is executing, and then we
      * ensure that unless pool is stopping, this thread does not have
      * its interrupt set.
      *
+     * 2. 在运行任何任务之前，获取锁以防止
+     * 其他池在任务执行时中断，然后我们
+     * 确保除非池正在停止，否则该线程没有
+     * 它的中断集。
+     *
      * 3. Each task run is preceded by a call to beforeExecute, which
      * might throw an exception, in which case we cause thread to die
      * (breaking loop with completedAbruptly true) without processing
      * the task.
+     *
+     * 3. 每个任务运行之前都会调用 beforeExecute，它
+     * 可能会抛出异常，在这种情况下我们会导致线程死亡
+     * (用completedAbruptly true 中断循环) 没有处理
+     * 任务。
      *
      * 4. Assuming beforeExecute completes normally, we run the task,
      * gathering any of its thrown exceptions to send to afterExecute.
@@ -1129,15 +1232,34 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * UncaughtExceptionHandler).  Any thrown exception also
      * conservatively causes thread to die.
      *
+     * 4.假设beforeExecute正常完成，我们运行任务，
+     * 收集任何抛出的异常以发送到 afterExecute。
+     * 我们分别处理 RuntimeException、Error（这两个
+     * 规范保证我们捕获）和任意 Throwables。
+     * 因为我们不能在 Runnable.run 中重新抛出 Throwables，所以我们
+     * 在出路时将它们包装在错误中（到线程的
+     * 未捕获异常处理程序）。 任何抛出的异常也
+     * 保守地导致线程死亡。
+     *
      * 5. After task.run completes, we call afterExecute, which may
      * also throw an exception, which will also cause thread to
      * die. According to JLS Sec 14.20, this exception is the one that
      * will be in effect even if task.run throws.
      *
+     * 5. task.run完成后，我们调用afterExecute，这可能
+     * 也会抛出异常，这也会导致线程
+     * 死。 根据 JLS Sec 14.20，这个例外是
+     * 即使 task.run 抛出，也会生效。
+     *
      * The net effect of the exception mechanics is that afterExecute
      * and the thread's UncaughtExceptionHandler have as accurate
      * information as we can provide about any problems encountered by
      * user code.
+     *
+     * 异常机制的最终效果是 afterExecute
+     * 和线程的 UncaughtExceptionHandler 一样准确
+     * 我们可以提供的关于遇到的任何问题的信息
+     * 用户代码。
      *
      * @param w the worker
      */
@@ -1145,18 +1267,106 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         Thread wt = Thread.currentThread();
         Runnable task = w.firstTask;
         w.firstTask = null;
+        /**
+         * 具体为什么先调用unlock 参考Worker的构造函数对 state的解释，以及 Worker的tryAcquire方法。
+         * 简单而言就是 在创建Woker对象的时候 会将AQS的state设置为-1. 设置为-1的目的是为了禁止在runWoker之前对 Worker的Thread进行中断。
+         * 因为在 ThreadPoolExecutor的 interruptIdleWorkers方法中 会遍历每一个Woker 调用woker对象的tryAcquire方法 获取AQS锁，如果获取成功了
+         * 则调用Woker对象的Thread属性的interrupt方法对线程进行中断。
+         * tryAcquire方法中获取锁的条件是 期望state=0，并将其设置为1 。也就是说 state！=0的时候不允许中断Woker的Thread。
+         *
+         * 因此里主要是 通过unlock方法将 state设置为 0.
+         *
+         * 而且 runWoker内部是一个While循环， 不断从 队列中取出任务执行。 值得注意的是  while内部 取出任务之后 总是 先 lock，然后再执行任务。
+         * 为什么 lock不放置在while的外部呢？ lock的作用又是什么呢？
+         *
+         * while中执行了woker的lock，则会导致state不为0， Worker的tryAcquire方法中只有当state=0的时候才会获取锁成功，这就意味着 Woker实现的锁是一个
+         * 独占式的且非重入的锁。只能被一个线程一次获取。 一旦执行任务的线程获取到了lock的锁，那么 其他线程通过ThreadPoolExecutor对象执行 interruptIdleWorkers
+         * 来终止当前已经 取出了任务的线程的时候必须要先 使用Woker.tryLock 因此也就实现了如果Worker正在执行任务，则Worker不允许中断。
+         *
+         * 问题： 为什么Worker正在执行任务时 不允许中断Woker的线程呢？ 暂时不清楚
+         *
+         */
         w.unlock(); // allow interrupts
+        //突然完成
         boolean completedAbruptly = true;
         try {
             while (task != null || (task = getTask()) != null) {
+                /**
+                 *其中 Worker的runWorker方法中 在执行任务之前使用了 lock方法获取锁，任务执行结束之后再释放锁。这个锁的主要作用就是 避免线程池关闭线程时对正在执行任务的线程进行中断操作。
+                 * 基于以上内容有两个问题：
+                 * （1） 如果一个线程 正在运行，他不会主动检查线程的中断状态， 也不会执行能够抛出中断异常的阻塞方法， 那么
+                 * 其他线程对这个线程发起中断 ，这个被中断的线程 应该感知不到 也不会退出线程，中断是一种协作机制，其他线程发起中断如果我不主动检测是感知不到中断，也不会退出线程。 我的这个理解是否正确？
+                 *
+                 * （2）为什么线程池中的线程 在执行任务的时候 要避免 这个线程被中断？
+                 *按照我的理解，基于第一点的原因，我觉的 正在执行任务的线程允许中断也无妨，因为从源码的内容来看，
+                 * 线程能否响应这个中断 取决于 用户的任务 task的run方法中是否 存在对中断的主动检查 以及是否会执行能够抛出中断异常的方法。
+                 *
+                 * 我们知道中断主要是 针对 阻塞的线程或者是主动检查中断状态的线程。 试想 ，如果当前Worker线程刚从 队列的poll方法恢复执行，然后这个时候发起了中断。
+                 * 那么worker执行完之后又通过getTask取数据，但是在getTask中我们没有看到 主动检查中断状态的代码，那么这个线程能否感知到之前发生的中断呢？答案是可以看到，像sleep等阻塞方法
+                 * 在进入之前会检查中断标记位，如果被中断立即抛出中断异常 不会再sleep
+                 *
+                 *
+                 * 问题： 如果一个线程正在运行，然后其他线程对其进行了中断，然后这个线程调用了能够抛出中断异常的阻塞等待方法，那么这个线程能否被中断？ 主要是先对其发起中断调用，然后阻塞在能够抛出中断异常的方法处
+                 *      // 比如：线程B 先对当前线程A发起了中断，那么当前线程执行sleep的时候能否响应中断？
+                       //如果能响应中断的话 是立即响应中断还是 等待60秒后恢复执行时响应中断？
+                 *     //答案是： 立即响应中断，也就是在sleep进入的时候发现中断标记位为true就抛出中断异常
+                 *            CountDownLatch countDownLatch = new CountDownLatch(1);
+                 *
+                 *         Thread thread = new Thread(new Runnable() {
+                 *             @Override
+                 *             public void run() {
+                 *                 System.out.println("runing");
+                 *
+                 *                 while (running) {//volatile
+                 *
+                 *                 }
+                 *                 try {
+                 *                     //问题： 线程B 先对当前线程A发起了中断，那么当前线程执行sleep的时候能否响应中断？
+                 *                     //如果能响应中断的话 是立即响应中断还是 等待60秒后恢复执行时响应中断？
+                 *                     //答案是： 立即响应中断，也就是在sleep进入的时候发现中断标记位为true就抛出中断异常
+                 *                     Thread.sleep(1000 * 60);
+                 *                 } catch (InterruptedException e) {
+                 *
+                 *                     e.printStackTrace();
+                 *                 }
+                 *             }
+                 *         });
+                 *         thread.start();
+                 *         //先对线程进行中断
+                 *         thread.interrupt();
+                 *         Thread.sleep(10);
+                 *         running = false;
+                 * //在睡眠之前先检查是否已经发生了中断，若是则抛出中断异常
+                 *
+                 *
+                 *
+                 */
                 w.lock();
+                /**
+                 * 如果线程池正在停止，那么要保证当前线程时中断状态；
+                 * 如果不是的话，则要保证当前线程不是中断状态
+                 */
                 if ((runStateAtLeast(ctl.get(), STOP) || (Thread.interrupted() && runStateAtLeast(ctl.get(), STOP))) && !wt.isInterrupted()) {
                     wt.interrupt();
                 }
                 try {
+                    /**
+                     * beforeExecute方法抛出异常  因为这个异常没有被catch 因此会退出while循环，同时任务并没有被执行
+                     * 但是在finally中会 执行 w.completedTasks++; 最终退出runWoker
+                     *
+                     * task.run抛出异常 这些异常都会被 throw 导致runWorker线程退出，同时finally中会将这个异常交给afterExecute 方法执行
+                     *
+                     * afterExecute方法中抛出异常 因为afterExecute没有被tryCatch，因此异常会抛出导致runWoker退出。
+                     *
+                     * 在抛出异常的情况下 都不会执行 while 后面的completedAbruptly ，因此就使得completedAbruptly=true 表示突然完成（因为异常导致突然中止）
+                     *
+                     * 正常情况下如果没有抛出异常，那么 会继续执行while最终正常退出while，然后执行while后面的 completedAbruptly=false，表示非突然完成，也就是正常结束。
+                     *
+                     */
                     beforeExecute(wt, task);
                     Throwable thrown = null;
                     try {
+                        //  //通过任务方式执行，不是线程方式
                         task.run();
                     } catch (RuntimeException x) {
                         thrown = x; throw x;
@@ -1172,7 +1382,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                     w.completedTasks++;
                     w.unlock();
                 }
-            }
+            }//end while
             completedAbruptly = false;
         } finally {
             processWorkerExit(w, completedAbruptly);

@@ -225,6 +225,38 @@ public class Thread implements Runnable {
 
     /**
      * 线程中断回调标记，设置此标记后，可在线程被中断时调用标记对象的回调方法
+     * 查看数据流
+     *
+     *参考： 在AbstractInterruptibleChannel中有一个begin方法
+     *    protected final void begin() {
+     *         if (interruptor == null) {
+     *             interruptor = new Interruptible() {
+     *                     public void interrupt(Thread target) {
+     *                         synchronized (closeLock) {
+     *                             if (!open)
+     *                                 return;
+     *                             open = false;
+     *                             interrupted = target;
+     *                             try {
+     *                                 AbstractInterruptibleChannel.this.implCloseChannel();
+     *                             } catch (IOException x) { }
+     *                         }
+     *                     }};
+     *         }
+     *         blockedOn(interruptor);
+     *         Thread me = Thread.currentThread();
+     *         if (me.isInterrupted())
+     *             interruptor.interrupt(me);
+     *     }
+     *
+     * begin方法中实现了Interruptible 接口，在实现的interrupt 方法中 本质上是对  AbstractInterruptibleChannel对象的 open标记改为false，
+     * 同时 使用interrupted 来标记 哪个线程中断了当前的线程。
+     *
+     * 对线程而言 当前线程A 使用线程B对象调用线程B的interrupt方法, ThreadB 的interrupt方法中 会 将当前的this对象 就是threadB。
+     *
+     *
+     *
+     *
      */
     private volatile Interruptible blocker;
 
@@ -235,6 +267,9 @@ public class Thread implements Runnable {
 
     /**
      * 为当前线程设置一个线程中断回调标记，以便在线程被中断时调用该标记的回调方法
+     *
+     * Anonymous in setJavaLangAccess() in System.blockedOn(Thread, Interruptible)  (java.lang)
+     *     System.initializeSystemClass()  (java.lang)
      */
     void blockedOn(Interruptible b) {
         synchronized (blockerLock) {
@@ -274,6 +309,145 @@ public class Thread implements Runnable {
     /**
      * 沉睡，锁不会释放，在 millis 毫秒之后会自己醒来
      * 使线程进入 TIMED_WAITING 状态，millis毫秒后自己醒来（不释放锁）
+     *
+     * 问题： 如果一个线程正在运行，然后其他线程对其进行了中断，然后这个线程调用了能够抛出中断异常的阻塞等待方法，那么这个线程能否被中断？ 主要是先对其发起中断调用，然后阻塞在能够抛出中断异常的方法处
+     *      // 比如：线程B 先对当前线程A发起了中断，那么当前线程执行sleep的时候能否响应中断？
+     //如果能响应中断的话 是立即响应中断还是 等待60秒后恢复执行时响应中断？
+     *     //答案是： 立即响应中断，也就是在sleep进入的时候发现中断标记位为true就抛出中断异常
+     *            CountDownLatch countDownLatch = new CountDownLatch(1);
+     *
+     *         Thread thread = new Thread(new Runnable() {
+     *             @Override
+     *             public void run() {
+     *                 System.out.println("runing");
+     *
+     *                 while (running) {//volatile
+     *
+     *                 }
+     *                 try {
+     *                     //问题： 线程B 先对当前线程A发起了中断，那么当前线程执行sleep的时候能否响应中断？
+     *                     //如果能响应中断的话 是立即响应中断还是 等待60秒后恢复执行时响应中断？
+     *                     //答案是： 立即响应中断，也就是在sleep进入的时候发现中断标记位为true就抛出中断异常
+     *                     Thread.sleep(1000 * 60);
+     *                 } catch (InterruptedException e) {
+     *
+     *                     e.printStackTrace();
+     *                 }
+     *             }
+     *         });
+     *         thread.start();
+     *         //先对线程进行中断
+     *         thread.interrupt();
+     *         Thread.sleep(10);
+     *         running = false;
+     *
+     *
+     *   ================
+     * 一.中断源码分析
+     * 入口找到了，接着继续深入分析。上面分析到了os::interrupt(thread)，os是区分系统的，此处以Linux系统为例：
+     * #os_linux.cpp
+     * void os::interrupt(Thread* thread) {
+     *   ...
+     *   OSThread* osthread = thread->osthread();
+     *
+     *   //中断标记位没有设置
+     *   if (!osthread->interrupted()) {
+     *     //则设置中断标记位为true
+     *     osthread->set_interrupted(true);
+     *     OrderAccess::fence();
+     *     ParkEvent * const slp = thread->_SleepEvent ;
+     *     //唤醒线程，对应sleep挂起
+     *     if (slp != NULL) slp->unpark() ;
+     *   }
+     *
+     *   //唤醒线程，对应wait/join 操作挂起等
+     *   if (thread->is_Java_thread())
+     *     ((JavaThread*)thread)->parker()->unpark();
+     *
+     *   //唤醒线程，对应synchronized 获取锁挂起
+     *   ParkEvent * ev = thread->_ParkEvent ;
+     *   if (ev != NULL) ev->unpark() ;
+     * }
+     * 复制代码
+     * 显然，在Java 层调用Thread.interrupt()方法，最终底层完成了两件事：
+     *
+     * 1、将中断标记位设置为true。
+     * 2、将挂起的线程唤醒。
+     *
+     * ===============
+     * 二 Thread.sleep 源码解析
+     * 通过比对上面两个Demo可知，引起结果不同是因为增加了Thread.sleep(xx)方法，因此来看看它内部到底做了什么。
+     * #jvm.cpp
+     * JVM_ENTRY(void, JVM_Sleep(JNIEnv* env, jclass threadClass, jlong millis))
+     *   JVMWrapper("JVM_Sleep");
+     *   //在睡眠之前先检查是否已经发生了中断，若是则抛出中断异常-----------》 这个地方非常重要，也就是先中断，然后后阻塞在中断方法的时候会在进入阻塞前主动检查中断状态
+     *   if (Thread::is_interrupted (THREAD, true) && !HAS_PENDING_EXCEPTION) {
+     *     THROW_MSG(vmSymbols::java_lang_InterruptedException(), "sleep interrupted");
+     *   }
+     *   ...
+     *
+     *   if (millis == 0) {
+     *     ...
+     *   } else {
+     *     ThreadState old_state = thread->osthread()->get_state();
+     *     thread->osthread()->set_state(SLEEPING);
+     *     if (os::sleep(thread, millis, true) == OS_INTRPT) {
+     *       //睡眠结束后，判断是否已经发生了中断，若是则抛出中断异常
+     *         THROW_MSG(vmSymbols::java_lang_InterruptedException(), "sleep interrupted");
+     *       }
+     *     }
+     *     thread->osthread()->set_state(old_state);
+     *   }
+     *   ...
+     * JVM_END
+     *
+     * #os_linux.cpp
+     * int os::sleep(Thread* thread, jlong millis, bool interruptible) {
+     *   assert(thread == Thread::current(),  "thread consistency check");
+     *
+     *   //_SleepEvent 是ParkEvent类型
+     *   ParkEvent * const slp = thread->_SleepEvent ;
+     *   ...
+     *   //interruptible 表示是否支持中断，默认支持
+     *   if (interruptible) {
+     *     ...
+     *     for (;;) {
+     *       //此处是死循环，退出依靠return或者break
+     *       if (os::is_interrupted(thread, true)) {
+     *         //再次判断是否已经发生中断，若是则返回OS_INTRPT
+     *         //该值在外层判断
+     *         return OS_INTRPT;
+     *       }
+     *
+     *       //时间耗尽，则退出
+     *       if(millis <= 0) {
+     *         return OS_OK;
+     *       }
+     *       ...
+     *       {
+     *         //挂起线程
+     *         slp->park(millis);
+     *         //线程被唤醒后继续循环
+     *       }
+     *     }
+     *   } else {
+     *     for (;;) {
+     *       ...
+     *       //时间耗尽，则退出
+     *       if(millis <= 0) break ;
+     *
+     *       prevtime = newtime;
+     *       slp->park(millis);
+     *     }
+     *     return OS_OK ;
+     *   }
+     * }
+     * 复制代码
+     * 可以看出，Thread.sleep(xx)方法作用如下：
+     *
+     * 1、线程挂起一定的时间，时间到达后继续执行循环。
+     * 2、interruptible==true场景下，在循环里判断是否发生了中断，若是，则抛出中断异常。
+     *
      *
      * @param millis 睡眠时间
      * @throws IllegalArgumentException 若 millis 为负数
@@ -853,6 +1027,11 @@ public class Thread implements Runnable {
             if (b != null) {
                 // 设置中断标记
                 interrupt0();
+                /**
+                 * 这个this是谁？
+                 * 线程A中 执行  threadB.interrupt ,因此这个this是threadB
+                 *
+                 */
                 b.interrupt(this);
                 return;
             }
@@ -888,6 +1067,62 @@ public class Thread implements Runnable {
      * <p>A thread interruption ignored because a thread was not alive
      * at the time of the interrupt will be reflected by this method
      * returning false.
+     *
+     *
+     * 中断状态查询
+     * Java 层的Thread.java里提供了两个方法来查询中断标记位的值，分别是：
+     * #Thread.java
+     *     //成员方法
+     *     public boolean isInterrupted() {
+     *         return isInterrupted(false);
+     *     }
+     *
+     *     //静态方法
+     *     public static boolean interrupted() {
+     *         return currentThread().isInterrupted(true);
+     *     }
+     * 复制代码
+     * 无论是成员方法还是静态方法，最终都调用了Thread.isInterrupted(xx)方法：
+     * #Thread.java
+     *     //ClearInterrupted 表示是否清空中断标记位
+     *     private native boolean isInterrupted(boolean ClearInterrupted);
+     * 复制代码
+     * 可以看出：
+     *
+     * 1、成员方法isInterrupted()没有清空中断标记位。
+     * 2、静态方法interrupted()清空了中断标记位。
+     *
+     * 继续跟进isInterrupted(xx)方法，由上面跟踪的入口经验最终有如下代码：
+     * #Thread.cpp
+     *   bool Thread::is_interrupted(Thread* thread, bool clear_interrupted) {
+     *      return os::is_interrupted(thread, clear_interrupted);
+     *    }
+     *
+     * #os_linux.cpp
+     *   bool os::is_interrupted(Thread* thread, bool clear_interrupted) {
+     *     OSThread* osthread = thread->osthread();
+     *     //查询当前中断值
+     *     bool interrupted = osthread->interrupted();
+     *
+     *     if (interrupted && clear_interrupted) {
+     *       //如果参数clear_interrupted 为true，表示要清空标记位
+     *       //则设置标记位为false
+     *       osthread->set_interrupted(false);
+     *   }
+     *
+     *   //返回查询到的中断标记位的值
+     *   return interrupted;
+     * }
+     * 复制代码
+     * 因此，Thread.isInterrupted(xx)方法的作用是：
+     *
+     * 1、查询当前线程的中断标记位的值。
+     * 2、根据参数决定是否重置中断标记。
+     *
+     * 而Thread.isInterrupted(xx) 是私有方法，因此Thread.java 对外提供了两种方法：   Thread.isInterrupted()(成员方法)和Thread.interrupted(静态方法)。
+     *
+     *
+     *
      *
      * @return  <code>true</code> if this thread has been interrupted;
      *          <code>false</code> otherwise.

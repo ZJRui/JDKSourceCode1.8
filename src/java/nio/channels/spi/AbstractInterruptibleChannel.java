@@ -154,6 +154,9 @@ public abstract class AbstractInterruptibleChannel
      */
     protected final void begin() {
         if (interruptor == null) {
+            /**
+             *参考Thread类的Interrupt 属性
+             */
             interruptor = new Interruptible() {
                     public void interrupt(Thread target) {
                         synchronized (closeLock) {
