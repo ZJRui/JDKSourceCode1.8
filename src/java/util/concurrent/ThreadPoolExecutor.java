@@ -292,12 +292,21 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      *   workerCount, indicating the effective number of threads
      *   runState,    indicating whether running, shutting down etc
      *
+     *   workerCount：表示有效线程数。
+     *
      * In order to pack them into one int, we limit workerCount to
      * (2^29)-1 (about 500 million) threads rather than (2^31)-1 (2
      * billion) otherwise representable. If this is ever an issue in
      * the future, the variable can be changed to be an AtomicLong,
      * and the shift/mask constants below adjusted. But until the need
      * arises, this code is a bit faster and simpler using an int.
+     *
+     * 为了将它们打包成一个 int，我们将 workerCount 限制为
+     * (2^29)-1（约 5 亿）个线程而不是 (2^31)-1 (2
+     * 十亿）否则可代表。 如果这是一个问题
+     * 未来，变量可以改成AtomicLong，
+     * 和下面的移位/掩码常数已调整。 但是直到需要
+     * 出现时，这段代码使用 int 会更快更简单。
      *
      * The workerCount is the number of workers that have been
      * permitted to start and not permitted to stop.  The value may be
@@ -306,6 +315,14 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * asked, and when exiting threads are still performing
      * bookkeeping before terminating. The user-visible pool size is
      * reported as the current size of the workers set.
+     *
+     * workerCount 是已完成的工人数
+     * 允许启动，不允许停止。 该值可能是
+     * 与实际活动线程数暂时不同，
+     * 例如当一个 ThreadFactory 未能创建线程时
+     * 询问，并且当退出线程仍在执行时
+     * 终止前的簿记。 用户可见的池大小为
+     * 报告为工人集的当前大小。
      *
      * The runState provides the main lifecycle control, taking on values:
      *
@@ -318,9 +335,25 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      *             will run the terminated() hook method
      *   TERMINATED: terminated() has completed
      *
+     *
+     * runState 提供主要的生命周期控制，取值：
+     *
+     * RUNNING：接受新任务并处理排队任务
+     * SHUTDOWN：不接受新任务，但处理排队的任务
+     * STOP：不接受新任务，不处理排队任务，
+     * 并中断正在进行的任务
+     * TIDYING：所有任务都已终止，workerCount 为零，
+     * 线程转换到状态 TIDYING
+     * 将运行 terminate() 钩子方法
+     * TERMINATED：terminated（）已完成
+     *
      * The numerical order among these values matters, to allow
      * ordered comparisons. The runState monotonically increases over
      * time, but need not hit each state. The transitions are:
+     *
+     * 这些值之间的数字顺序很重要，以允许
+     * 有序比较。 runState 单调递增
+     * 时间，但不必击中每个状态。 过渡是：
      *
      * RUNNING -> SHUTDOWN
      *    On invocation of shutdown(), perhaps implicitly in finalize()
@@ -336,12 +369,21 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * Threads waiting in awaitTermination() will return when the
      * state reaches TERMINATED.
      *
+     * 在 awaitTermination() 中等待的线程将在状态达到 TERMINATED。
+     *
      * Detecting the transition from SHUTDOWN to TIDYING is less
      * straightforward than you'd like because the queue may become
      * empty after non-empty and vice versa during SHUTDOWN state, but
      * we can only terminate if, after seeing that it is empty, we see
      * that workerCount is 0 (which sometimes entails a recheck -- see
      * below).
+     *
+     * 检测从 SHUTDOWN 到 TIDYING 的过渡较少
+     * 比你想要的更简单，因为队列可能会变成
+     * 在 SHUTDOWN 状态下非空后为空，反之亦然，但是
+     * 我们只有在看到它是空的之后才能终止，我们看到
+     * workerCount 为 0（有时需要重新检查——参见
+     * 以下）。
      */
     private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
     private static final int COUNT_BITS = Integer.SIZE - 3;
@@ -879,6 +921,19 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                 if (wc >= CAPACITY ||
                     wc >= (core ? corePoolSize : maximumPoolSize))
                     return false;
+                /**
+                 * 在这里 对workCount数量进行增加。
+                 * 从这里我们看到 实际上是先增加 workcount 然后才会创建 Worker线程。
+                 *
+                 * 某种意义上workcount可以看到 start的 worker数量。可以理解为正在运行的worker数量。
+                 *
+                 * Worker的run方法执行完之后 会执行 java.util.concurrent.ThreadPoolExecutor#runWorker(java.util.concurrent.ThreadPoolExecutor.Worker)
+                 * 在这个runWorker方法的finally中 会执行ThreadPoolExecutor#processWorkerExit(java.util.concurrent.ThreadPoolExecutor.Worker, boolean)
+                 * runWorker的finally意味着 Worker线程的退出。 在processWorkerExit 方法中会通过 decrementWorkerCount 方法对workerCount进行减少。
+                 *
+                 * 也就是说workCount=1 并不意味着有一个线程正在执行任务或者阻塞等待任务执行，可能这个线程正在执行退出尚未对workcount做减法。
+                 *
+                 */
                 if (compareAndIncrementWorkerCount(c))
                     break retry;
                 c = ctl.get();  // Re-read ctl
@@ -1296,16 +1351,69 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * @throws NullPointerException if {@code command} is null
      */
     public void execute(Runnable command) {
+
+        /**
+         *     Executor框架是用来管理线程池的，他对外提供 往Executor中提交任务的方法
+         *     一般而言 实现Executor 接口的线程池 在实现execute方法提交任务是会根据线程池中的核心线程数量来决定是创建新的核心线程执行这个任务还是将任务放置到队列中等待执行
+         *     具体可以参考 ： java.util.concurrent.ThreadPoolExecutor#execute
+         *      *
+         *     这里仅仅是定义一个提交任务的接口。
+         *             *
+         *     线程池 并不一定意味着 任务会被交给 线程池中的线程执行，在Guava中 定义了一个直接线程池 Executor对象，如下
+         *
+         *     enum DirectExecutor implements Executor {
+         *         INSTANCE;
+         *      *
+         *         @Override
+         *         public void execute(Runnable command) {
+         *             command.run();
+         *         }
+         *      *
+         *         @Override
+         *         public String toString() {
+         *             return "MoreExecutors.directExecutor()";
+         *         }
+         *     }
+         *
+         *     在这个DirectExecutor 对象的execute方法中 直接执行当前的任务Command，也就意味着当前线程通过 DirectExecutor的execute方法
+         *     提交任务给线程池的时候 这个任务直接在当前线程被执行了。
+         *
+         */
+
+
+
         // 若任务为空，则抛 NPE，不能执行空任务
         if (command == null) {
             throw new NullPointerException();
         }
+        /**
+         * ctl这个int 被分成两部分 workCount和runState
+         * workCount表示有效线程数，The workerCount is the number of workers that have been permitted to start and not permitted to stop.
+         * 具体参考ctl变量定义
+         *
+         * 既然ctl表示有效线程数 那么 ctl在哪里被修改呢？
+         */
         int c = ctl.get();
         // 若工作线程数小于核心线程数，则创建新的线程，并把当前任务 command 作为这个线程的第一个任务
+        /**
+         * 在并发编程的艺术书中提到 如果核心线程数未满则创建新的核心线程。
+         * 实际线程池中并没有什么核心线程、工作线程区分，核心线程和工作线程都是work对象。
+         *
+         *workerCountOf方法取出低29位的值，表示当前活动的线程数；
+         * 如果当前活动的线程数小于corePoolSize，则新建一个线程放入线程池中，并把该任务放到线程中
+         */
         if (workerCountOf(c) < corePoolSize) {
+            /**
+             * addWorker中的第二个参数表示限制添加线程的数量 是根据据corePoolSize 来判断还是maximumPoolSize来判断；
+             * 如果是ture，根据corePoolSize判断
+             * 如果是false，根据maximumPoolSize判断
+             */
             if (addWorker(command, true)) {
                 return;
             }
+            /**
+             * 如果添加失败，则重新获取ctl值
+             */
             c = ctl.get();
         }
         /**
@@ -1316,18 +1424,46 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
          */
         // 若线程池处于 RUNNING 状态，将任务添加到阻塞队列 workQueue 中
         if (isRunning(c) && workQueue.offer(command)) {
-            // 再次检查线程池标记
+            //double-check，重新获取ctl的值
             int recheck = ctl.get();
             // 如果线程池已不处于 RUNNING 状态，那么移除已入队的任务，并且执行拒绝策略
             if (!isRunning(recheck) && remove(command)) {
                 // 任务添加到阻塞队列失败，执行拒绝策略
                 reject(command);
             }
-            // 如果线程池还是 RUNNING 的，并且线程数为 0，那么开启新的线程
+            // 如果线程池还是 RUNNING 的，并且线程数为 0（什么情况下会出现这种情况），那么开启新的线程
+            /**
+             *获取线程池中的有效线程数，如果数量是0，则执行addWorker方法；
+             * 第一个参数为null，表示在线程池中创建一个线程，但没有传递Runable对象给这个线程
+             * 第二个参数为false，将线程池的线程数量的上限设置为maximumPoolSize，添加线程时根据maximumPoolSize来判断.
+             * 这里要注意一下addWorker(null, false);，也就是创建一个线程，但并没有传入任务，因为任务已经被添加到workQueue中了，
+             * 所以worker在执行的时候，会直接从workQueue中获取任务。所以，在workerCountOf(recheck) == 0时执行addWorker(null, false);
+             * 也是为了保证线程池在RUNNING状态下必须要有一个线程来执行任务。
+             *
+             *
+             * 问题： 上面的代码中将任务添加到队列中，一般情况下我们说 核心线程数已满则添加到任务队列中，并不会创建新的线程。
+             * 那么下面为什么会 出现 workerCountOf(recheck) == 0的时候，为什么还会创建新的线程呢？
+             * https://stackoverflow.com/questions/46901095/java-threadpoolexecutor-why-we-need-to-judge-the-worker-count-in-the-execute-fun
+             * 考虑这样一种情况  corePoolSize=1，  我们第一次检查的时候 有一个线程正在运行，
+             * 在if (workerCountOf(c) < corePoolSize) and workQueue.offer(command)之间（当前线程尚未添加Job到队列中），这个worker线程完成了他的工作。那么
+             * 这个worker线程将会被阻塞。这个时候我们重新检查就会出现workerCountOf(recheck) == 0的情况，我们需要重新启动一个新的worker。
+             * coolpoolSize不总是等于真实的worker的数量。
+             * Every workercould die after they finish their job and find no job in the block queue within a limited time.
+             * But a core thread never quits when it has finished working, even if there are no tasks in the queue
+             *
+             * Answer2： ctually if you look at the ThreadPoolExecutor.execute source there is a comment that states the same.
+             * Particularly it says "So we recheck state and if necessary roll back the enqueuing if stopped,
+             * or start a new thread if there are none.". I'm not sure what John misses in that comment
+             *
+             * Answer 3： 也就是说workCount=1 并不意味着有一个线程正在执行任务或者阻塞等待任务执行，可能这个线程正在执行退出尚未对workcount做减法。
+             * 参考addWorker中对workCount的解释。
+             *
+             */
             else if (workerCountOf(recheck) == 0) {
                 addWorker(null, false);
             }
         }
+        //任务添加到 队列失败的情况下创建新的工作线程执行任务，
         /**
          * 至此，有以下两种情况：
          * 1.线程池处于非运行状态，线程池不再接受新的线程

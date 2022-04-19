@@ -127,6 +127,32 @@ package java.util.concurrent;
  */
 public interface Executor {
 
+
+//    Executor框架是用来管理线程池的，他对外提供 往Executor中提交任务的方法
+//    一般而言 实现Executor 接口的线程池 在实现execute方法提交任务是会根据线程池中的核心线程数量来决定是创建新的核心线程执行这个任务还是将任务放置到队列中等待执行
+//    具体可以参考 ： java.util.concurrent.ThreadPoolExecutor#execute
+//     *
+//    这里仅仅是定义一个提交任务的接口。
+//            *
+//    线程池 并不一定意味着 任务会被交给 线程池中的线程执行，在Guava中 定义了一个直接线程池 Executor对象，如下
+//
+//    enum DirectExecutor implements Executor {
+//        INSTANCE;
+//     *
+//        @Override
+//        public void execute(Runnable command) {
+//            command.run();
+//        }
+//     *
+//        @Override
+//        public String toString() {
+//            return "MoreExecutors.directExecutor()";
+//        }
+//    }
+//
+//    在这个DirectExecutor 对象的execute方法中 直接执行当前的任务Command，也就意味着当前线程通过 DirectExecutor的execute方法
+//    提交任务给线程池的时候 这个任务直接在当前线程被执行了。
+
     /**
      * Executes the given command at some time in the future.  The command
      * may execute in a new thread, in a pooled thread, or in the calling
