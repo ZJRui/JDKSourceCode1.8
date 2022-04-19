@@ -1100,21 +1100,33 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * @param completedAbruptly if the worker died due to user exception
      */
     private void processWorkerExit(Worker w, boolean completedAbruptly) {
+        /**
+         * 如果completedAbruptly为true，则说明线程执行时出现异常，需要将workerCount数量减一
+         * 如果completedAbruptly为false，说明在getTask方法中已经对workerCount进行减一，这里不用再减
+         */
+
         if (completedAbruptly) // If abrupt, then workerCount wasn't adjusted
             decrementWorkerCount();
 
         final ReentrantLock mainLock = this.mainLock;
         mainLock.lock();
         try {
+            //统计完成的任务数
             completedTaskCount += w.completedTasks;
+            //从workers中移除，也就表示从线程池中移除一个工作线程
             workers.remove(w);
         } finally {
             mainLock.unlock();
         }
-
+        //钩子函数，根据线程池的状态来判断是否结束线程池
         tryTerminate();
 
         int c = ctl.get();
+        /**
+         * 当前线程是RUNNING或SHUTDOWN时，如果worker是异常结束，那么会直接addWorker；
+         * 如果allowCoreThreadTimeOut=true，那么等待队列有任务，至少保留一个worker；
+         * 如果allowCoreThreadTimeOut=false，workerCount少于coolPoolSize
+         */
         if (runStateLessThan(c, STOP)) {
             if (!completedAbruptly) {
                 int min = allowCoreThreadTimeOut ? 0 : corePoolSize;
@@ -1141,15 +1153,37 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      *    both before and after the timed wait, and if the queue is
      *    non-empty, this worker is not the last thread in the pool.
      *
+     * 根据任务执行阻塞或定时等待
+     * 当前配置设置，如果此工作人员返回 null
+     * 必须退出，因为：
+     * 1. 有超过 maximumPoolSize 个工人（由于
+     * 调用 setMaximumPoolSize)。
+     * 2. 池停止。
+     * 3. 池关闭，队列为空。
+     * 4. 这个worker等待任务超时，超时
+     * 工人可能被解雇（即，
+     * {@code allowCoreThreadTimeOut || workerCount > corePoolSize})
+     * 在定时等待之前和之后，如果队列是
+     * 非空，这个worker不是池中的最后一个线程。
+     *
      * @return task, or null if the worker must exit, in which case
      *         workerCount is decremented
      */
     private Runnable getTask() {
+        //timeout变量的值表示上次从阻塞队列中获取任务是否超时
         boolean timedOut = false; // Did the last poll() time out?
 
         for (;;) {
             int c = ctl.get();
             int rs = runStateOf(c);
+
+            /**
+             * 如果rs >= SHUTDOWN，表示线程池非RUNNING状态，需要再次判断：
+             * 1、rs >= STOP ，线程池是否正在STOP
+             * 2、阻塞队列是否为空
+             * 满足上述条件之一，则将workCount减一，并返回null；
+             * 因为如果当前线程池的状态处于STOP及以上或队列为空，不能从阻塞队列中获取任务；
+             */
 
             // Check if queue empty only if necessary.
             if (rs >= SHUTDOWN && (rs >= STOP || workQueue.isEmpty())) {
@@ -1159,8 +1193,35 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
 
             int wc = workerCountOf(c);
 
+
+            /**
+             * timed变量用于判断是否需要进行超时控制；
+             * allowCoreThreadTimeOut默认是false，也就是核心线程不允许进行超时；
+             * wc > corePoolSize，表示当前线程数大于核心线程数量；
+             * 对于超过核心线程数量的这些线程，需要进行超时控制；
+             */
+
             // Are workers subject to culling?
             boolean timed = allowCoreThreadTimeOut || wc > corePoolSize;
+
+
+            /**
+             * wc > maximumPoolSize的情况是因为可能在此方法执行阶段同时执行了 setMaximumPoolSize方法；
+             * timed && timedOut 如果为true，表示当前操作需要进行超时控制，并且上次从阻塞队列中获取任务发生了超时；
+             * 接下来判断，如果有效咸亨数量大于1，或者workQueue为空，那么将尝试workCount减1；
+             * 如果减1失败，则返回重试；
+             * 如果wc==1时，也就说明当前线程是线程池中的唯一线程了；
+             *
+             *
+             * 注意：第二个if判断，目的是为了控制线程池的有效线程数量。
+             * 有上文分析得到，在execute方法时，如果当前线程池的线程数量超过coolPoolSize且小于maxmumPoolSize，
+             * 并且阻塞队列已满时，则可以通过增加工作线程。但是如果工作线程在超时时间内没有获取到任务，timeOut=true，
+             * 说明workQueue为空，也就说当前线程池不需要那么多线程来执行任务了，可以把多于的corePoolSize数量的线程销毁掉，
+             * 保证线程数量在corePoolSize即可。
+             * 什么时候会销毁线程？当然是runWorker方法执行完后，也就是Worker中的run方法执行完后，由JVM自动回收。
+             *
+             *
+             */
 
             if ((wc > maximumPoolSize || (timed && timedOut))
                 && (wc > 1 || workQueue.isEmpty())) {
@@ -1169,12 +1230,18 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                 continue;
             }
 
+            /**
+             * timed为trure，则通过workQueue的poll方法进行超时控制，如果在keepAliveTime时间内没有获取任务，则返回null；
+             * 否则通过take方法，如果队列为空，则take方法会阻塞直到队列中不为空；
+             */
             try {
                 Runnable r = timed ? workQueue.poll(keepAliveTime, TimeUnit.NANOSECONDS) : workQueue.take();
                 if (r != null)
                     return r;
+                //如果r==null，说明已经超时了，timedOut = true;
                 timedOut = true;
             } catch (InterruptedException retry) {
+                //如果获取任务时当前线程发生了中断，则将timedOut = false;
                 timedOut = false;
             }
         }
@@ -1261,9 +1328,11 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * 我们可以提供的关于遇到的任何问题的信息
      * 用户代码。
      *
+     *
      * @param w the worker
      */
     final void runWorker(Worker w) {
+        //https://juejin.cn/post/6844903920511238158
         Thread wt = Thread.currentThread();
         Runnable task = w.firstTask;
         w.firstTask = null;
