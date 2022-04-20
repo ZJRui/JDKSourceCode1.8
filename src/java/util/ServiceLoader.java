@@ -191,6 +191,18 @@ public final class ServiceLoader<S>
     // The class or interface representing the service being loaded
     private final Class<S> service;
 
+    /**
+     * ServiceLoader<Driver> loader=ServiceLoader.load(Driver.class)
+     * Iterator<Driver> iterator=loader.iterator()
+     * while(iterator.hasNext()){
+     *     Driver driver=(Dirver)iterator.next()
+     * }
+     * 在 ServiceLoader的静态load方法中  会获取当前 线程上下文类加载器，这个类加载器一般为AppClassLoader
+     * 然后创建一个ServiceLoader 对象，并将这个ClassLoader 作为ServiceLoader对象的loader属性。
+     * 那么这个loader 属性在什么时候使用呢？ 查看LazyIterator的next方法
+     *
+     *
+     */
     // The class loader used to locate, load, and instantiate providers
     private final ClassLoader loader;
 
@@ -339,8 +351,10 @@ public final class ServiceLoader<S>
             if (nextName != null) {
                 return true;
             }
+            //在jar的Meta-inf/service/下查找接口名称的文件并保存到configs中。
             if (configs == null) {
                 try {
+                    // Meta-inf/service/service接口名称
                     String fullName = PREFIX + service.getName();
                     if (loader == null)
                         configs = ClassLoader.getSystemResources(fullName);
@@ -350,12 +364,14 @@ public final class ServiceLoader<S>
                     fail(service, "Error locating configuration files", x);
                 }
             }
+            //遍历每个文件
             while ((pending == null) || !pending.hasNext()) {
                 if (!configs.hasMoreElements()) {
                     return false;
                 }
                 pending = parse(service, configs.nextElement());
             }
+            //文件内容 ，比如com.mysql.cj.jdbc.Driver
             nextName = pending.next();
             return true;
         }
@@ -367,6 +383,9 @@ public final class ServiceLoader<S>
             nextName = null;
             Class<?> c = null;
             try {
+                //使用ServiceLoader对象的 loader属性 来加载指定的类
+                //这个cn怎么来的？ 参考 LazyIterator的hasNext方法
+                //
                 c = Class.forName(cn, false, loader);
             } catch (ClassNotFoundException x) {
                 fail(service,
