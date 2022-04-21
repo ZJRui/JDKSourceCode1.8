@@ -1408,6 +1408,26 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                  * //在睡眠之前先检查是否已经发生了中断，若是则抛出中断异常
                  *
                  *
+                 * ---------------------------------------------------------
+                 *
+                 * 说明1： 关于lock我们说是为了 禁止对正在执行任务的线程进行中断。 实际上这个 是否lock还可以做另外一种用处：就是判断线程是否active。
+                 * 线程池中的线程可能有三种状态：（1）阻塞在take （2）正在执行任务 已经lock（3）处于take-> 没有执行任务 或者执行完任务尚未take之间的瞬态。
+                 *
+                 * ThreadPoolExecutor的getActiveCount：方法是返回 正在执行任务的线程的数量，他就是遍历每一个worker，看这个worker是否locked，如果是就认为正在执行任务
+                 * ThreadPoolExecutor的gePoolSize是返回线程的数量，显然这和 getActiveCount有区别。
+                 *
+                 * 在Dubbo中提供了一种线程池实现 EagerThreadPoolExecutor， JUC的ThreadPoolExecutor标准实现是：提交任务时先判断线程池是否核心线程已满，如果没有则创建新的核心线程执行任务
+                 * 如果核心线程已满，则入队，如果队列已满导致入队不成功则创建新的worker线程，如果worker线程已满创建失败则抛出异常。 也就是说
+                 * JUC的队列满了之后才会开启新的线程来处理任务（前提是核心线程已满的情况下，且线程池线程数量没超过最大线程数量）
+                 *
+                 * EagerThreadPoolExecutor 当线程池核心线程已满，新来的任务不会被放入线程池队列，而是会开启新线程来执行处理任务。 这个是如何做到的呢？
+                 * 其实就是EagerThreadPoolExecutor使用了自定义的TaskQueue，这个TaskQueue重写了队列的offer方法，
+                 * TaskQueue在入队的时候发现 如果当前线程池的线程数小于最大线程数 则返回false表示入队失败，从而 创建新的线程。
+                 * 创建新的线程的时候如果发现线程池中线程已经到了最大值 导致创建也失败了就会抛出异常  这个时候我们捕获这个异常 将任务放入队列中。具体参考源码
+                 *
+                 *
+                 *
+                 *
                  *
                  */
                 w.lock();
@@ -2199,6 +2219,10 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * Returns the approximate number of threads that are actively
      * executing tasks.
      *
+     ** 返回活跃线程的大概数量
+     *       * 执行任务。
+     *
+     *
      * @return the number of threads
      */
     public int getActiveCount() {
@@ -2207,6 +2231,22 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         try {
             int n = 0;
             for (Worker w : workers)
+            /**
+             * 说明1： 关于lock我们说是为了 禁止对正在执行任务的线程进行中断。 实际上这个 是否lock还可以做另外一种用处：就是判断线程是否active。
+             * 线程池中的线程可能有三种状态：（1）阻塞在take （2）正在执行任务 已经lock（3）处于take-> 没有执行任务 或者执行完任务尚未take之间的瞬态。
+             *
+             * ThreadPoolExecutor的getActiveCount：方法是返回 正在执行任务的线程的数量，他就是遍历每一个worker，看这个worker是否locked，如果是就认为正在执行任务
+             * ThreadPoolExecutor的gePoolSize是返回线程的数量，显然这和 getActiveCount有区别。
+             *
+             * 在Dubbo中提供了一种线程池实现 EagerThreadPoolExecutor， JUC的ThreadPoolExecutor标准实现是：提交任务时先判断线程池是否核心线程已满，如果没有则创建新的核心线程执行任务
+             * 如果核心线程已满，则入队，如果队列已满导致入队不成功则创建新的worker线程，如果worker线程已满创建失败则抛出异常。 也就是说
+             * JUC的队列满了之后才会开启新的线程来处理任务（前提是核心线程已满的情况下，且线程池线程数量没超过最大线程数量）
+             *
+             * EagerThreadPoolExecutor 当线程池核心线程已满，新来的任务不会被放入线程池队列，而是会开启新线程来执行处理任务。 这个是如何做到的呢？
+             * 其实就是EagerThreadPoolExecutor使用了自定义的TaskQueue，这个TaskQueue重写了队列的offer方法，
+             * TaskQueue在入队的时候发现 如果当前线程池的线程数小于最大线程数 则返回false表示入队失败，从而 创建新的线程。
+             * 创建新的线程的时候如果发现线程池中线程已经到了最大值 导致创建也失败了就会抛出异常  这个时候我们捕获这个异常 将任务放入队列中。具体参考源码
+             */
                 if (w.isLocked())
                     ++n;
             return n;
