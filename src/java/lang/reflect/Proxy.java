@@ -409,13 +409,21 @@ public class Proxy implements java.io.Serializable {
      */
     private static Class<?> getProxyClass0(ClassLoader loader,
                                            Class<?>... interfaces) {
+        //限制接口的数量
         if (interfaces.length > 65535) {
             throw new IllegalArgumentException("interface limit exceeded");
         }
 
+        /**
+         * 如果指定的类加载器中已经 创建了实现了 指定接口的代理类，则查找缓存 ，否则通过ProxyClassFactory 创建实现了指定接口的代理类
+         *
+         */
         // If the proxy class defined by the given loader implementing
         // the given interfaces exists, this will simply return the cached copy;
         // otherwise, it will create the proxy class via the ProxyClassFactory
+        // 如果给定加载器定义的代理类实现
+        // 给定的接口存在，这将简单地返回缓存的副本；
+        // 否则，它将通过 ProxyClassFactory 创建代理类
         return proxyClassCache.get(loader, interfaces);
     }
 
@@ -705,6 +713,88 @@ public class Proxy implements java.io.Serializable {
                                           InvocationHandler h)
         throws IllegalArgumentException
     {
+
+        /**
+         *
+         * JDK动态代理的实现原理参考《Mybatis技术内幕》
+         *
+         * 本质上是通过ProxyClassFactory的apply方法  检测代理类需要实现的接口集合，然后确定代理类的名称，之后创建 代理类并写入文件中，最后加载代理类，返回
+         * 对应的class对象用于后续的实例化代理对象。   ProxyClassFactory工厂生成的，这个工厂类会去调用ProxyGenerator类的generateProxyClass()方法来生成代理类的字节码
+         * 比如下面就是生成的一个 代理类字节码文件
+         *
+         * public class Proxy0 extends Proxy implements UserDao {
+         *
+         *     //第一步, 生成构造器
+         *     protected Proxy0(InvocationHandler h) {
+         *         super(h);
+         *     }
+         *
+         *     //第二步, 生成静态域
+         *     private static Method m1;   //hashCode方法
+         *     private static Method m2;   //equals方法
+         *     private static Method m3;   //toString方法
+         *     private static Method m4;   //... -----》 这里有一个接口方法
+         *
+         *     // 省略 object toString hashCode方法
+         *
+         *     @Override
+         *     public void save(User user) {
+         *         try {
+         *             //构造参数数组, 如果有多个参数往后面添加就行了
+         *             Object[] args = new Object[] {user};
+         *             h.invoke(this, m4, args);
+         *         } catch (Throwable e) {
+         *             throw new UndeclaredThrowableException(e);
+         *         }
+         *     }
+         *
+         *     //第四步, 生成静态初始化方法
+         *     static {
+         *         try {
+         *             Class c1 = Class.forName(Object.class.getName());
+         *             Class c2 = Class.forName(UserDao.class.getName());
+         *             m1 = c1.getMethod("hashCode", null);
+         *             m2 = c1.getMethod("equals", new Class[]{Object.class});
+         *             m3 = c1.getMethod("toString", null);
+         *             m4 = c2.getMethod("save", new Class[]{User.class}); --------------》 初始化业务接口方法。
+         *             //...
+         *         } catch (Exception e) {
+         *             e.printStackTrace();
+         *         }
+         *     }
+         *
+         * }
+         *
+         *
+         * ------------------
+         * 注意： 我们针对某一个接口生成代理类的时候，这个代理类会被缓存起来。
+         * 如果指定的类加载器中已经 创建了实现了 指定接口的代理类，则查找缓存 ，否则通过ProxyClassFactory 创建实现了指定接口的代理类
+         *
+         * 也就是说如果我有两个 UserService接口实现类对象，然后我们为这两个serviceA和serviceB创建代理对象，那么他们会使用同一个代理类。
+         *
+         * 但是我们在创建 每一个代理对象的时候会分别传递一个InvocationHandler对象，也就是两个InvocationHandler对象。 InvocationHandler中持有 target原始目标对象，从而实现两个代理对象会执行不同的 Service对象的方法
+         *
+         *  代理对象在执行接口方法的时候会执行 InvocationHandler的invoke方法，InvocationHandler的invoke方法中又会执行目标对象的方法
+         *
+         * public class TestInvokerHandler implements InvocationHandler{
+         *
+         *     private Object target;//真正的业务对象
+         *
+         *     pulbic Object invoke(Object proxy, Method method, Object[] args){
+         *
+         *         //执行业务方法之前
+         *         Object result=-method.invoke(target,args);
+         *         //执行业务之后
+         *         return result;
+         *
+         *     }
+         *
+         * }
+         *
+         *
+         *
+         */
+
         Objects.requireNonNull(h);
 
         final Class<?>[] intfs = interfaces.clone();
