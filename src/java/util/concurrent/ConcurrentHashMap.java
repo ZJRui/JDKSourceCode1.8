@@ -2168,6 +2168,12 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             else if ((fh = f.hash) == MOVED)
                 advance = true; // already processed
             else {
+                /**
+                 *假设线程A获取到了 对桶位置3的复制转移权，那么他对桶位置3的链表进行复制转移，
+                 * 尚未完整整个复制转移操作之前 旧的桶位置上的节点不会被设置为ForwardingNode。对于线程B的get操作，线
+                 * 程B会从old 桶中读取。 假设线程C要往桶这个索引位置的链表中插入数据，这个该如何控制？线程B在获取到链
+                 * 表的控制权后会对链表首个节点加锁，防止在复制转移过程中其他线程插入数据。
+                 */
                 synchronized (f) {
                     if (tabAt(tab, i) == f) {
                         Node<K, V> ln, hn;
@@ -2232,6 +2238,30 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
                                     (lc != 0) ? new TreeBin<K, V>(hi) : t;
                             setTabAt(nextTab, i, ln);
                             setTabAt(nextTab, i + n, hn);
+                            /**
+                             *
+                             *注意：put元素的时候，如果发现 当前桶位置上的节点的hash值为moved表示Concurrenthashmap 正在重散列。
+                             * 对于当前线程他不一定能意识到当前HashMap正在散列，因为可能ConcurrentHashMapHashMap的桶的某一个位置上的节点的hash是moved。
+                             * 这个位置和当前key在桶中对应的位置并不相同，这个时候他就意识不到 ConcurrentHashMap正在散列。
+                             * 第二个就是：如果当前线程意识到了，那么当前线程就会去帮助再散列。他会去选择某一个尚未开始 重散列的桶的位置进行散列，
+                             * 为了解决多线程并发再散列同一个桶位置的问题我们引入了transferIndex这个控制变量。
+                             * 假设当前线程获取到了某一个桶位置的再散列控制权，那么他会把这个桶位置的链表拆分为两个链表：一个链表位置不变，
+                             * 一个链表增加2的n次方， 注意我们将再散列的过程是复制过程，
+                             * 也就是保持oldTable桶位置上的链表结构不变，重新创建新的节点Node对象挂载到newTable桶对应的位置上。
+                             * 挂载之后才会执行  将旧的table的桶位置设置为fwd
+                             * setTabAt(nextTab, i, ln); // 新的链表1挂载到新的nextTable上
+                             * setTabAt(nextTab, i + n, hn);//新的链表2挂载到新的nextTable上
+                             * setTabAt(tab, i, fwd);//fwd是ForwardingNode，将oldTable桶位置设置为fwd
+                             *
+                             *
+                             * 也就是说 在 复制链表尚未挂载到新的桶数组之前，oldTable的桶位置上不是ForwardingNode，
+                             * 因此这个时候如果有线程get数据，他仍然是从 old 桶中读取数据。仅当old Table桶位置上是ForwardingNode
+                             * 的时候才会去新的桶中读取数据，这个时候能够保证 old桶的指定索引位置链表上的所有元素都被完整复制到新的桶中。
+                             * 这会存在一个问题： 假设线程A获取到了 对桶位置3的复制转移权，那么他对桶位置3的链表进行复制转移，
+                             * 尚未完整整个复制转移操作之前 旧的桶位置上的节点不会被设置为ForwardingNode。对于线程B的get操作，线
+                             * 程B会从old 桶中读取。 假设线程C要往桶这个索引位置的链表中插入数据，这个该如何控制？线程B在获取到链
+                             * 表的控制权后会对链表首个节点加锁，防止在复制转移过程中其他线程插入数据。
+                             */
                             setTabAt(tab, i, fwd);
                             advance = true;
                         }
