@@ -1071,6 +1071,28 @@ public interface Map<K,V> {
      * whether the function is applied once atomically only if the value is not
      * present.
      *
+     *
+     * <p>
+     * 注意这个compute方法： compute 方法的实现时 对给定的key 从map中取值，然后取出来的值使用第二个参数函数进行计算
+     *
+     * 如果计算的结果为null，则在map中删除 这个键值对。 如果计算的新值和 map中已经存在的值不同 则更新。
+     *
+     * 如果map中不存在key，则意味着 oldvalue 为null，且计算函数的返回值不为null，则将
+     * 键值对（key,newvlaue）插入到map中，这就实现了(存在此key则修改，不存在，则会进行插入)
+     *
+     * 注意compute方法的返回值是newvalue，而不是map中的oldvalue
+     *
+     * </p>
+     * <p>
+     *     computeifabsent ：如果map中不存在值，或者值为null，则用第二个参数函数进行计算。
+     *     参数函数计算的新值不为空的情况下会被放入到map中。 如果为空，则不更新map（毕竟map中没有key，或者key的value为null，
+     *     参数函数计算新值为null的情况下更新和不更新map没区别）
+     *     典型用法： map.computeifabsent(key, k -> new hashset<v>()).add(v);
+     * </p>
+     *
+     *
+     *
+     *
      * @param key key with which the specified value is to be associated
      * @param remappingFunction the function to compute a value
      * @return the new value associated with the specified key, or null if none
