@@ -599,6 +599,20 @@ public final class Method extends Executable {
      * @since  1.5
      */
     public Object getDefaultValue() {
+        /**
+         * method 竟然有defaultValue？
+         *
+         * Annotations have their "attributes" as methods. For instance:
+         *
+         * public @interface Example {
+         *     public String stringValue() default "string default value";
+         *     public int intValue() default 10;
+         * }
+         * The getDefaultValue() of a Method from an annotation returns the default value of an annotation "attribute" defined this way.
+         * In the example, the default value of the Method stringValue() is "string default value".
+         *
+         *
+         */
         if  (annotationDefault == null)
             return null;
         Class<?> memberType = AnnotationType.invocationHandlerReturnType(
