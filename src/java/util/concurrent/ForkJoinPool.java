@@ -1273,6 +1273,9 @@ public class ForkJoinPool extends AbstractExecutorService {
      * when common pool threads are disabled, we allow the underlying
      * common.parallelism field to be zero, but in that case still report
      * parallelism as 1 to reflect resulting caller-runs mechanics.
+     *
+     * 常见的并行性。为了在禁用公共池线程时允许更简单的使用和管理，我们允许底层公共线程。
+     * 并行度字段为零，但在这种情况下，仍然报告并行度为1，以反映结果调用者运行机制。
      */
     static final int commonParallelism;
 
@@ -2768,6 +2771,7 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @since 1.8
      */
     public static int getCommonPoolParallelism() {
+        //返回公共池的目标并行度级别。
         return commonParallelism;
     }
 

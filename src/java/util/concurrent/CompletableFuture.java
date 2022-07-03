@@ -1835,6 +1835,42 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * by a task running in the {@link ForkJoinPool#commonPool()} after
      * it runs the given action.
      *
+     *
+     *-------------------
+     * runAsync  返回的CompletableFuture的反省是Void类型, Future的get返回的类型就是 泛型Void类型， 因此 我们说 runAsync用于一步执行任务，
+     * 但是他是一个没有返回值的 Future
+     *CompletableFuture的runAsync只是简单的异步执行一个线程，但是它将返回一个CompletableFuture，有了这个CompletableFuture，可以重新组装和调配，这是和一个普通Runnable不同之处。
+     *
+     * CompletableFuture future = CompletableFuture.runAsync(new Runnable() {
+     *     @Override
+     *     public void run() {
+     *         System.out.println("只是一个线程而已");
+     *     }
+     * });
+     *
+     * completableFuture1.get();//获取阻塞执行结果
+     * ————————————————
+     *
+     * /有返回值的supplyAsync 异步回调
+     *  //ajax，成功和失败的回调
+     *  //返回的是错误信息
+     *  CompletableFuture<Integer> completableFuture = CompletableFuture.supplyAsync(() -> {
+     *      System.out.println(Thread.currentThread().getName() + "supplyAsync=>Integer");
+     *      //int i=10/0;
+     *      return 200;//------------------>注意这里有返回值
+     *  });
+     *
+     *  System.out.println(completableFuture.whenComplete((t, u) -> {
+     *      System.out.println("t-> " + t);//正常的返回结果
+     *      System.out.println("u-> " + u);//错误信息
+     *  }).exceptionally((e) -> {
+     *      System.out.println(e.getMessage());
+     *      return 404;
+     *  }).get());
+     *
+     *
+     *
+     *
      * @param runnable the action to run before completing the
      * returned CompletableFuture
      * @return the new CompletableFuture
