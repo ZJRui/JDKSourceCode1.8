@@ -63,10 +63,16 @@ import java.util.*;
  * <a href="{@docRoot}/../technotes/guides/collections/index.html">
  * Java Collections Framework</a>.
  *
+ *
+ * 延迟元素的一个无界阻塞队列，其中的一个元素只有在其延迟过期时才能被获取。
+ * 队列的头是延迟时间在过去最久的那个delay元素。如果没有延迟过期，则没有头部，poll将返回null。当元素的getDelay(TimeUnit.NANOSECONDS)方法返回一个小于或等于0的值时，就会发生过期。即使未过期的元素不能使用take或poll删除，它们也会被视为正常元素。例如，size方法返回过期和未过期元素的计数。这个队列不允许有空元素。
+ * 这个类及其迭代器实现了Collection和iterator接口的所有可选方法。方法Iterator()中提供的Iterator不能保证以任何特定的顺序遍历DelayQueue中的元素。
+ *
  * @since 1.5
  * @author Doug Lea
  * @param <E> the type of elements held in this collection
  */
+@SuppressWarnings("all")
 public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
     implements BlockingQueue<E> {
 
@@ -213,15 +219,28 @@ public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
                     long delay = first.getDelay(NANOSECONDS);
                     if (delay <= 0)
                         return q.poll();
+                    // 如果delay大于0 ，则下面要阻塞了
+                    // 将first置为空方便gc，因为有可能其它元素弹出了这个元素
+                    // 这里还持有着引用不会被清理
                     first = null; // don't retain ref while waiting
+                    // 如果前面有其它线程在等待，直接进入等待
                     if (leader != null)
                         available.await();
                     else {
                         Thread thisThread = Thread.currentThread();
                         leader = thisThread;
                         try {
+                            // 等待delay时间后自动醒过来
+                            // 醒过来后把leader置空并重新进入循环判断堆顶元素是否到期
+                            // 这里即使醒过来后也不一定能获取到元素
+                            // 因为有可能其它线程先一步获取了锁并弹出了堆顶元素
+                            // 条件锁的唤醒分成两步，先从Condition的队列里出队
+                            // 再入队到AQS的队列中，当其它线程调用LockSupport.unpark(t)的时候才会真正唤醒
+                            // 关于AQS我们后面会讲的^^
                             available.awaitNanos(delay);
                         } finally {
+                            // 如果leader还是当前线程就把它置为空，让其它线程有机会获取元素
+
                             if (leader == thisThread)
                                 leader = null;
                         }
@@ -229,8 +248,12 @@ public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
                 }
             }
         } finally {
+            // 成功出队后，如果leader为空且堆顶还有元素，就唤醒下一个等待的线程
+
             if (leader == null && q.peek() != null)
+                // signal()只是把等待的线程放到AQS的队列里面，并不是真正的唤醒
                 available.signal();
+            // 解锁，这才是真正的唤醒
             lock.unlock();
         }
     }

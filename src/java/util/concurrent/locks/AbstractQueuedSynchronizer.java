@@ -1695,6 +1695,9 @@ public abstract class AbstractQueuedSynchronizer
      * @return true if cancelled before the node was signalled
      */
     final boolean transferAfterCancelledWait(Node node) {
+        /**
+         * 如果有必要，在取消等待后将节点传输到同步队列。如果线程在发出信号之前被取消，则返回true。
+         */
         if (compareAndSetWaitStatus(node, Node.CONDITION, 0)) {
             enq(node);
             return true;
@@ -2063,23 +2066,45 @@ public abstract class AbstractQueuedSynchronizer
          */
         public final long awaitNanos(long nanosTimeout)
                 throws InterruptedException {
+            /**
+             *
+             *
+             * 实现定时条件等待。
+             * 如果当前线程被中断，抛出InterruptedException。
+             * 保存getState返回的锁状态。
+             * 以保存状态作为参数调用release函数，如果失败则抛出IllegalMonitorStateException。
+             * 阻塞，直到发出信号、中断或超时。
+             * 通过调用带有保存状态参数的acquire的专门版本来重新获取。(   注意： condition.awaitNanos()会
+             * 释放锁，然后当前线程等待；等到当前线程回复后，当前线程必须要再次获取锁然后才会继续向下执行)
+             * 如果在第4步中阻塞时被中断，则抛出InterruptedException。
+             * -----
+             *
+             * 1.释放锁
+             * 2.轮询检查线程是否在同步线程上，如果在则退出自旋。否则检查是否已超过解除挂起时间，如果超过，则退出挂起，否则继续挂起线程到等待解除挂起。
+             * 3.退出挂起之后，采用自旋的方式竞争锁。
+             */
             if (Thread.interrupted())
                 throw new InterruptedException();
             Node node = addConditionWaiter();
             int savedState = fullyRelease(node);
             final long deadline = System.nanoTime() + nanosTimeout;
             int interruptMode = 0;
+            //采用自旋的方式检查是否已在同步队列当中
             while (!isOnSyncQueue(node)) {
+                //如果挂起超过一定的时间，则退出
                 if (nanosTimeout <= 0L) {
                     transferAfterCancelledWait(node);
                     break;
                 }
+                //继续挂起线程
+
                 if (nanosTimeout >= spinForTimeoutThreshold)
                     LockSupport.parkNanos(this, nanosTimeout);
                 if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)
                     break;
                 nanosTimeout = deadline - System.nanoTime();
             }
+            //采用自旋的方式竞争锁
             if (acquireQueued(node, savedState) && interruptMode != THROW_IE)
                 interruptMode = REINTERRUPT;
             if (node.nextWaiter != null)
