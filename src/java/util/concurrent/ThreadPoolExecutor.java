@@ -535,6 +535,9 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * If false (default), core threads stay alive even when idle.
      * If true, core threads use keepAliveTime to time out waiting
      * for work.
+     *
+     * 如果为false(默认值)，核心线程即使在空闲时也保持活动。如果为真，核心线程使用keepAliveTime超时等待工作。
+     *
      */
     private volatile boolean allowCoreThreadTimeOut;
 
@@ -1233,6 +1236,10 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
             /**
              * timed为trure，则通过workQueue的poll方法进行超时控制，如果在keepAliveTime时间内没有获取任务，则返回null；
              * 否则通过take方法，如果队列为空，则take方法会阻塞直到队列中不为空；
+             *
+             * 问题：非核心线程时如何做到关闭安的？ 非核心线程空闲时间超哥keepAliveTime 就会关闭，但是 他是如何知道自己超过了 keepAliveTime的呢？
+             * （1）方案1：有一个线程不断检查每个线程自上次执行完任务之后的时间戳
+             * （2）方案2：线程有两种状态，要么正在执行任务，要么阻塞在取任务。这里主要是使用到了队列的超时取任务的方法
              */
             try {
                 Runnable r = timed ? workQueue.poll(keepAliveTime, TimeUnit.NANOSECONDS) : workQueue.take();
