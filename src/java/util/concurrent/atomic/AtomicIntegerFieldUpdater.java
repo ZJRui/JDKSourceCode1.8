@@ -64,11 +64,14 @@ import sun.reflect.Reflection;
  * @author Doug Lea
  * @param <T> The type of the object holding the updatable field
  */
+@SuppressWarnings("alll")
 public abstract class AtomicIntegerFieldUpdater<T> {
     /**
      * Creates and returns an updater for objects with the given field.
      * The Class argument is needed to check that reflective types and
      * generic types match.
+     *
+     * 抽象方法，提供一个静态方法以便得到实例
      *
      * @param tclass the class of the objects holding the field
      * @param fieldName the name of the field to be updated
@@ -387,9 +390,11 @@ public abstract class AtomicIntegerFieldUpdater<T> {
                 field = AccessController.doPrivileged(
                     new PrivilegedExceptionAction<Field>() {
                         public Field run() throws NoSuchFieldException {
+                            //字段不存在会抛异常
                             return tclass.getDeclaredField(fieldName);
                         }
                     });
+                //检查访问级别，
                 modifiers = field.getModifiers();
                 sun.reflect.misc.ReflectUtil.ensureMemberAccess(
                     caller, tclass, null, modifiers);
@@ -405,9 +410,11 @@ public abstract class AtomicIntegerFieldUpdater<T> {
                 throw new RuntimeException(ex);
             }
 
+            //必须是int
             if (field.getType() != int.class)
                 throw new IllegalArgumentException("Must be integer type");
 
+            //必须用volatile修饰
             if (!Modifier.isVolatile(modifiers))
                 throw new IllegalArgumentException("Must be volatile type");
 
@@ -423,6 +430,7 @@ public abstract class AtomicIntegerFieldUpdater<T> {
                            !isSamePackage(tclass, caller))
                           ? caller : tclass;
             this.tclass = tclass;
+            //用Unsafe里的那一坨方法去原子更新
             this.offset = U.objectFieldOffset(field);
         }
 
