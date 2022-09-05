@@ -88,6 +88,10 @@ public abstract class AbstractInterruptibleChannel
     implements Channel, InterruptibleChannel
 {
 
+    /**
+     * 这个类是西安了InterruptibleChannel接口，该接口的主要作用 是使得通道能以异步的方式进行
+     * 关闭和中断
+     */
     private final Object closeLock = new Object();
     private volatile boolean open = true;
 

@@ -75,6 +75,11 @@ public abstract class ServerSocketChannel
     extends AbstractSelectableChannel
     implements NetworkChannel
 {
+    /**
+     * ServerSocketChannel不是侦听网络套接字的完整抽象，必须通过调用socket方法获取关联的
+     * ServerSocket对象来完整对套接字选项的绑定和操作。不可能为任意的已有ServerSocket创建
+     * 通道，也不可能指定与ServerSocketChannel关联的ServerSocket所使用的SocketImpl对象
+     */
 
     /**
      * Initializes a new instance of this class.

@@ -277,6 +277,9 @@ public abstract class SelectableChannel
     public final SelectionKey register(Selector sel, int ops)
         throws ClosedChannelException
     {
+        /**
+         *register方法可以将 SelectableChannel自身注册到Selector选择器对象上
+         */
         return register(sel, ops, null);
     }
 

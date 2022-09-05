@@ -53,6 +53,15 @@ public abstract class AbstractSelectableChannel
 
     // The provider that created this channel
     private final SelectorProvider provider;
+    /**
+     *
+     *
+     * SelectableChannel对象有register方法，可以将自身注册到某一个Selector选择器对象身上。注册
+     * 之后返回 这个Channle在当前Selector对象上的唯一标识selectionKey
+     *
+     * 一个SelectableChannle可以注册到多个Selector选择器对象身上，因此这里是一个SelectionKey数组
+     *
+     */
 
     // Keys that have been created by registering this channel with selectors.
     // They are saved because if this channel is closed the keys must be
