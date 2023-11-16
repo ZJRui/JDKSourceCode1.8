@@ -26,9 +26,9 @@
 package java.nio.channels;
 
 import java.io.IOException;
-import java.net.ServerSocket;
-import java.net.SocketOption;
-import java.net.SocketAddress;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.*;
 import java.nio.channels.spi.AbstractSelectableChannel;
 import java.nio.channels.spi.SelectorProvider;
 
@@ -79,7 +79,32 @@ public abstract class ServerSocketChannel
      * ServerSocketChannel不是侦听网络套接字的完整抽象，必须通过调用socket方法获取关联的
      * ServerSocket对象来完整对套接字选项的绑定和操作。不可能为任意的已有ServerSocket创建
      * 通道，也不可能指定与ServerSocketChannel关联的ServerSocket所使用的SocketImpl对象
+     *
+     *
+     * 2.ServerSocketChannel和ServerSocket的关系：在不使用ServerSocketChannel 而只是单纯使用ServerSocket和Socket类的情
+     * 况下也能实现服务端与客户端通信，那么为什么要使用ServerSocketChannel通道呢？因为单纯的使用ServerSocket和
+     * socket类是实现不了IO多路服用的
+     *
+     * 从这段代码来看， ServerSocketChannel 好像并没有什么作用，仅仅是用它的socket方法来创建一个 ServerSocket。 后续的读写操作完全都是使用了ServerSocket来完成。
+     * 那么为什么我们要使用ServerSocketChannel呢
+     *         ServerSocketChannel serverSocketChannel=ServerSocketChannel.open();
+     *         ServerSocket serverSocket = serverSocketChannel.socket();
+     *         serverSocket.bind(new InetSocketAddress("localhost",8888));
+     *         Socket socket = serverSocket.accept();
+     *         InputStream inputStream = socket.getInputStream();
+     *         InputStreamReader inputStreamReader=new InputStreamReader(inputStream);
+     *         //使用inputStreamReader进行读取
+     *
+     *         //关闭
+     *         inputStreamReader.close();
+     *         socket.close();
+     *         serverSocket.close();
+     *         serverSocketChannel.close();
+     *
+     *
+     *
      */
+
 
     /**
      * Initializes a new instance of this class.
@@ -225,6 +250,21 @@ public abstract class ServerSocketChannel
     public abstract ServerSocket socket();
 
     /**
+     *
+     * 备注：
+     *         ServerSocketChannel serverSocketChannel=ServerSocketChannel.open();
+     *         ServerSocket serverSocket = serverSocketChannel.socket();
+     *         serverSocket.bind(new InetSocketAddress("localhost",8888));
+     *         Socket socket = serverSocket.accept();
+     *         InputStream inputStream = socket.getInputStream();
+     *         InputStreamReader inputStreamReader=new InputStreamReader(inputStream);
+     *         //使用inputStreamReader进行读取
+     *         上面的代码中 使用到了Server Socket的accept方法而不是ServerSocketChannel的accept
+     *
+     *         使用ServerSocketChannel的accept方法的优势是该方法返回SocketChannel通道，可以把这个通道注册到选择器中实现IO多路服用
+     *
+     *
+     *
      * Accepts a connection made to this channel's socket.
      *
      * <p> If this channel is in non-blocking mode then this method will

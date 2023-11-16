@@ -528,6 +528,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * Threads use this timeout when there are more than corePoolSize
      * present or if allowCoreThreadTimeOut. Otherwise they wait
      * forever for new work.
+     * 。*线程在超过corePoolSize时使用此等待工作的空闲线程的超时时间(纳秒)超时*存在或允许CoreThreadTimeOut。否则，他们将永远等待新的工作。
      */
     private volatile long keepAliveTime;
 
@@ -1233,6 +1234,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
             /**
              * timed为trure，则通过workQueue的poll方法进行超时控制，如果在keepAliveTime时间内没有获取任务，则返回null；
              * 否则通过take方法，如果队列为空，则take方法会阻塞直到队列中不为空；
+             *
              */
             try {
                 Runnable r = timed ? workQueue.poll(keepAliveTime, TimeUnit.NANOSECONDS) : workQueue.take();
@@ -1359,9 +1361,16 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         //突然完成
         boolean completedAbruptly = true;
         try {
+            /**
+             * 注意这里的getTask ，如果getTask为null 那么就会导致当前work线程退出while循环，也就是执行完成了。
+             * 当你调用了shutDownNow的时候 会将线程池的状态改为 stop，getTask内部for 死循环 从队列中获取任务，同时每次会检查线程池的状态
+             * 如果线程池是stop状态，则返回null。导致这个work线程退出。 这也就实现了 关闭线程池
+             */
             while (task != null || (task = getTask()) != null) {
                 /**
-                 *其中 Worker的runWorker方法中 在执行任务之前使用了 lock方法获取锁，任务执行结束之后再释放锁。这个锁的主要作用就是 避免线程池关闭线程时对正在执行任务的线程进行中断操作。
+                 *其中 Worker的runWorker方法中 在执行任务之前使用了 lock方法获取锁，任务执行结束之后再释放锁。这个锁的主要作用就是
+                 * 避免线程池关闭线程时对正在执行任务的线程进行中断操作。
+                 *
                  * 基于以上内容有两个问题：
                  * （1） 如果一个线程 正在运行，他不会主动检查线程的中断状态， 也不会执行能够抛出中断异常的阻塞方法， 那么
                  * 其他线程对这个线程发起中断 ，这个被中断的线程 应该感知不到 也不会退出线程，中断是一种协作机制，其他线程发起中断如果我不主动检测是感知不到中断，也不会退出线程。 我的这个理解是否正确？
@@ -1431,9 +1440,42 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                  *
                  */
                 w.lock();
+                // If pool is stopping, ensure thread is interrupted;
+                // if not, ensure thread is not interrupted.  This
+                // requires a recheck in second case to deal with
+                // shutdownNow race while clearing interrupt
+                //如果池停止，请确保线程中断；
+                //如果没有，请确保线程没有中断。这。
+                //第二例需要复核处理。
+                //清除中断时的Shudown Now竞争
+
                 /**
+                 * Thread.interrupted()//判断是否被中断，并清除当前中断状态
+                 * isInterrupted:判断是否被中断
+                 *
                  * 如果线程池正在停止，那么要保证当前线程时中断状态；
                  * 如果不是的话，则要保证当前线程不是中断状态
+                 * 1.runStateAtLeast(ctl.get(), STOP)：runStateAtLeast 方法用于检查线程池的运行状态是否至少为 STOP。
+                 * 如果线程池的状态达到了 STOP 或更高级别，说明线程池已经停止或正在停止。这是一个线程池的状态控制机制。
+                 * 2.(Thread.interrupted() && runStateAtLeast(ctl.get(), STOP))：这一部分检查当前线程是否被中断，且线程池的状态是
+                 * 否至少为 STOP。Thread.interrupted() 方法用于检查当前线程的中断状态，并清除中断状态。如果当前线
+                 * 程被中断，且线程池的状态至少为 STOP，则表示需要中断工作线程。
+                 * 3.!wt.isInterrupted()：检查工作线程 wt 的中断状态是否为 false，确保工作线程还没有被中断。
+                 * 这段代码的目的是在特定条件下中断工作线程，以确保线程池在停止时能够正确地中断工作线程。
+                 *
+                 * ==================================下面这个if的逻辑可以堪称这个样子：
+                 * 1.runStateAtLeast(ctl.get(), STOP) && !wt.isInterrupted()  or  2. (Thread.interrupted() && runStateAtLeast(ctl.get(), STOP)) && !wt.isInterrupted()
+                 *
+                 * 对于第一点：表示如果当前线城市至少是stop状态，且当前线程没有被中断，则中断当前的线程。 也就是如果线程池停止，请确保线程中断。
+                 * 对于第2点： runStateAtLeast(ctl.get(), STOP) 为false的情况下(也就是线程池没有处于stop状态)才会
+                 * 执行  (Thread.interrupted() && runStateAtLeast(ctl.get(), STOP))
+                 *  而这个 《 (Thread.interrupted() && runStateAtLeast(ctl.get(), STOP))》 会先执行Thread.interrrupted擦除中断标记为，因为毕竟当前线程没有处于stop状态下
+                 *  所以要清除中断标记位， 也就是 如果没有，请确保线程没有中断
+                 *
+                 *  ===================
+                 * 注意 在shutDown方法中 会设置线程池的状态为 shutdowning.
+                 * 而在shutdownNot中将线程池设置为stop
+                 *
                  */
                 if ((runStateAtLeast(ctl.get(), STOP) || (Thread.interrupted() && runStateAtLeast(ctl.get(), STOP))) && !wt.isInterrupted()) {
                     wt.interrupt();
@@ -1456,6 +1498,11 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                     Throwable thrown = null;
                     try {
                         //  //通过任务方式执行，不是线程方式
+                        /**
+                         * 调用shutdownnow()方法退出线程池时，线程池会向正在运行的任务发送Interrupt，任务中的阻塞操作会响应这个中断并
+                         * 抛出InterruptedException，但同时会清除线程的Interrupted 状态标识，导致后续流程感知不到线程的中断了。要想立
+                         * 即停止线程池中任务最好的方式就是直接向任务传递退出信号。
+                         */
                         task.run();
                     } catch (RuntimeException x) {
                         thrown = x; throw x;
@@ -1784,6 +1831,25 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * complete execution.  Use {@link #awaitTermination awaitTermination}
      * to do that.
      *
+     *
+     *ThreadPoolExecutor中通常找到的shutdown方法。shutdown方法用于启动有序关闭，这意味着它允许先前提交的任务完成执行，但不接受新的任务执行。
+     *
+     * 以下是描述的关键要点：
+     *
+     * 启动有序关闭： 调用shutdown方法来启动关闭过程。
+     *
+     * 先前提交的任务将被执行：在关闭之前提交的任务将被允许完成执行。 已经提交到线程池中的任务会被继续执行。具体的实现逻辑是 在interruptIdleWorkers
+     * 方法中不会对 正在执行任务的线程进行中断
+     *
+     * 不接受新任务执行：在调用shutdown之后，执行器停止接受新的任务执行。在关闭之后尝试提交新任务将导致拒绝。
+     * 如果已经关闭，则调用不会产生额外效果：如果执行器已经关闭，再次调用shutdown将不会产生额外效果。一旦执行器关闭，它将保持在关闭状态。
+     *
+     * 该方法不等待先前提交的任务完成执行：shutdown方法本身不会阻塞并等待先前提交的任务完成。它启动关闭过程，但不等待任务完成。
+     * 就是说在线程B中 使用shutDown方法停止线程池，不会阻塞线程B的继续执行，线程B会继续执行shutdown方法之后的代码。
+     *
+     * 使用awaitTermination等待任务完成：如果需要等待先前提交的任务完成，可以在调用shutdown之后使用awaitTermination方法。
+     * awaitTermination会阻塞，直到所有任务完成执行或经过指定的超时时间。
+     *
      * @throws SecurityException {@inheritDoc}
      */
     public void shutdown() {
@@ -1823,6 +1889,18 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         mainLock.lock();
         try {
             checkShutdownAccess();
+            /**
+             * 1.注意 在shutDown方法中 会设置线程池的状态为 shutdowning.
+             * 而在shutdownNot中将线程池设置为stop
+             *
+             * 2.shutDownNow能够关闭线程池的原理是： （1）如果线程处于阻塞状态，由于shutdownNow会中断每一个work线程，因此会唤醒iwork线
+             * 程的继续执行。 （2）worker 线程的while (task != null || (task = getTask()) != null) {} task不为null的时候会
+             * 执行task， getTask在线程池为stop状态的时候会返回null，导致work线程退出 while循环从而终止了work Thread。
+             * 那么shutdownNow一定能关闭线程池吗？ 答案是不一定， shutDownNow会对每一个线程进行中断，如果某一个workThread执行的业务
+             * 中有两个 wait，当业务阻塞在第一个wait的时候 线程池shutdownNow的中断可能会唤醒该业务，但是后续业务又再次阻塞在wait，导致业务任
+             * 务无法结束，线程池无法关闭。 只要改业务任务能够执行完成，对于这个workThread来说他再次从任务队列中getTask的时候会发现线
+             * 程池是stop状态，所以会返回null task。从而退出while循环，从而workThread终止。
+             */
             advanceRunState(STOP);
             interruptWorkers();
             tasks = drainQueue();
