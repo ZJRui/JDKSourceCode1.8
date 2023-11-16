@@ -1906,6 +1906,14 @@ public final class Class<T> implements java.io.Serializable,
      * {@code Class} object. This includes public, protected, default
      * (package) access, and private fields, but excludes inherited fields.
      *
+     * <p>
+     *     返回一个Field对象数组，反映由这个class对象表示的类或接口声明的所有字段。
+     *     这包括公共、受保护、默认(包)访问和私有字段，但不包括继承字段。
+     *     问题：接口中声明的字段也会返回？不是的。 如果当前的 Clss对象是一个接口的class，那么就会返回当前接口中定义的field。
+     *
+     *     如果当前的class是一个接口实现类的class，那么就会返回当前实现类中的field，不会包含其他class中的field
+     * </p>
+     *
      * <p> If this {@code Class} object represents a class or interface with no
      * declared fields, then this method returns an array of length 0.
      *

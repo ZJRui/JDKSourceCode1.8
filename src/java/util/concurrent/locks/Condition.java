@@ -34,8 +34,9 @@
  */
 
 package java.util.concurrent.locks;
-import java.util.concurrent.TimeUnit;
+
 import java.util.Date;
+import java.util.concurrent.TimeUnit;
 
 /**
  * {@code Condition} factors out the {@code Object} monitor
@@ -273,6 +274,10 @@ public interface Condition {
      * <p>The lock associated with this condition is atomically
      * released and the current thread becomes disabled for thread scheduling
      * purposes and lies dormant until <em>one</em> of five things happens:
+     * <p>
+     *     导致当前线程等待，直到发出信号或中断，或指定的等待时间过去。
+     * 与此条件相关联的锁被原子释放，当前线程在线程调度中被禁用，处于休眠状态，直到以下五种情况之一发生:
+     * </p>
      * <ul>
      * <li>Some other thread invokes the {@link #signal} method for this
      * {@code Condition} and the current thread happens to be chosen as the
@@ -307,6 +312,11 @@ public interface Condition {
      * long to re-wait in cases where the wait returns but an awaited
      * condition still does not hold. Typical uses of this method take
      * the following form:
+     * <p>
+     *     该方法在返回时根据提供的nanosTimeout值返回剩余等待的纳秒数的估计值，
+     *     或者在超时时返回小于或等于零的值。该值可用于确定在等待返回但等待条件仍然不成立的情况下
+     *     是否重新等待以及重新等待多长时间。这种方法的典型用法如下
+     * </p>
      *
      *  <pre> {@code
      * boolean aMethod(long timeout, TimeUnit unit) {
@@ -324,11 +334,40 @@ public interface Condition {
      *   }
      * }}</pre>
      *
+     *
+     * <pre>
+     * {@code private def waitUntilConnected(timeout: Long, timeUnit: TimeUnit): Unit = {
+     *     info("Waiting until connected.")
+     *     var nanos = timeUnit.toNanos(timeout)
+     *     inLock(isConnectedOrExpiredLock) {
+     *       var state = connectionState
+     *       while (!state.isConnected && state.isAlive) {
+     *         if (nanos <= 0) {
+     *           throw new ZooKeeperClientTimeoutException(s"Timed out waiting for connection while in state: $state")
+     *         }
+     *         nanos = isConnectedOrExpiredCondition.awaitNanos(nanos)
+     *         state = connectionState
+     *       }
+     *       if (state == States.AUTH_FAILED) {
+     *         throw new ZooKeeperClientAuthFailedException("Auth failed either before or while waiting for connection")
+     *       } else if (state == States.CLOSED) {
+     *         throw new ZooKeeperClientExpiredException("Session expired either before or while waiting for connection")
+     *       }
+     *       isFirstConnectionEstablished = true
+     *     }
+     *     info("Connected.")
+     *   }}
+     * </pre>
+     *
      * <p>Design note: This method requires a nanosecond argument so
      * as to avoid truncation errors in reporting remaining times.
      * Such precision loss would make it difficult for programmers to
      * ensure that total waiting times are not systematically shorter
      * than specified when re-waits occur.
+     * <p>
+     *     设计注意:此方法需要一个纳秒参数，以避免报告剩余时间时出现截断错误。这种精度损失将使程
+     *     序员难以确保当重新等待发生时，总等待时间不会系统地短于指定的时间。
+     * </p>
      *
      * <p><b>Implementation Considerations</b>
      *
@@ -338,12 +377,20 @@ public interface Condition {
      * the case and if not, how to respond. Typically, an exception will be
      * thrown (such as {@link IllegalMonitorStateException}) and the
      * implementation must document that fact.
+     * <p>
+     *     当调用此方法时，假定当前线程持有与此条件关联的锁。这取决于实现来确定是否存在这种情况，如果不是，如何响应。通常，
+     *     会抛出一个异常(例如IllegalMonitorStateException)，实现必须记录这一事实。
+     * </p>
      *
      * <p>An implementation can favor responding to an interrupt over normal
      * method return in response to a signal, or over indicating the elapse
      * of the specified waiting time. In either case the implementation
      * must ensure that the signal is redirected to another waiting thread, if
      * there is one.
+     * <p>
+     *     一个实现可以更倾向于响应中断，而不是响应信号的正常方法返回，或者更倾向于指示指定的等待时间的流逝。
+     *     无论哪种情况，实现都必须确保将信号重定向到另一个等待线程(如果有等待线程的话)。
+     * </p>
      *
      * @param nanosTimeout the maximum time to wait, in nanoseconds
      * @return an estimate of the {@code nanosTimeout} value minus
@@ -352,8 +399,17 @@ public interface Condition {
      *         subsequent call to this method to finish waiting out
      *         the desired time.  A value less than or equal to zero
      *         indicates that no time remains.
+     *         <p>
+     *             nanosTimeout值的估计值减去从该方法返回所花费的等待时间。可以使用一个正值作为该方法后续调用的参数，以完成所需时间的等待。小于或等于零的值表示没有剩余时间。
+     *         </p>
      * @throws InterruptedException if the current thread is interrupted
      *         (and interruption of thread suspension is supported)
+     *
+     *
+     * <p>
+     *            该方法几乎和await()方法同样，只是多了超时时间的处理该方法的主要设计思想是，若是设定的超时时间还没到，咱们就将线程挂起；
+     *            超过等待的时间了，咱们就将线程从条件队列转移到同步对列中。
+     * </p>
      */
     long awaitNanos(long nanosTimeout) throws InterruptedException;
 
