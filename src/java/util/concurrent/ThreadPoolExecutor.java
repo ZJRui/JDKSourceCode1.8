@@ -914,6 +914,16 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * elements, it deletes them one by one.
      */
     private List<Runnable> drainQueue() {
+        /**
+         * 返回队列中尚未开始执行的任务。 这里使用到了drainto方法。但是该方法存在一定的缺陷
+         *
+         *
+         *drainto方法的解释：从该队列中移除所有可用元素，并将它们添加到给定集合中。此操作可能比重复轮询此队列更有效。
+         * 试图向集合中添加元素时遇到的失败可能导致在引发关联异常时，任何集合都不存在，或者两者都不在集合中。
+         * 尝试将队列抽干到自身将导致异常。此外，如果在操作进行时修改了指定的集合，则此操作的行为是未定义的。
+         *
+         * 因此在drainto 之后还对队列进行了一次遍历，如果队列中还有任务，就一个个的删除。
+         */
         BlockingQueue<Runnable> q = workQueue;
         ArrayList<Runnable> taskList = new ArrayList<Runnable>();
         q.drainTo(taskList);
@@ -1890,6 +1900,10 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * @throws SecurityException {@inheritDoc}
      */
     public List<Runnable> shutdownNow() {
+        /**
+         * shutdownNow能够返回 队列中尚未执行的任务
+         *
+         */
         List<Runnable> tasks;
         final ReentrantLock mainLock = this.mainLock;
         mainLock.lock();

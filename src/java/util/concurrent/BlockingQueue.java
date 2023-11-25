@@ -336,6 +336,29 @@ public interface BlockingQueue<E> extends Queue<E> {
      * this operation is undefined if the specified collection is
      * modified while the operation is in progress.
      *
+     * 从该队列中移除所有可用元素，并将它们添加到给定集合中。此操作可能比重复轮询此队列更有效。
+     * 试图向集合中添加元素时遇到的失败可能导致在引发关联异常时，任何集合都不存在，或者两者都不在集合中。
+     * 尝试将队列抽干到自身将导致异常。此外，如果在操作进行时修改了指定的集合，则此操作的行为是未定义的。
+     *
+     * drainto存在一定的缺点： 在线程池的实现使用中， shutdownNow能够立即关闭线程池，并返回当先尚未执行的任务。他就是通过drainto实现的。
+     *
+     *    private List<Runnable> drainQueue() {
+     *
+     *         BlockingQueue<Runnable> q = workQueue;
+     *         ArrayList<Runnable> taskList = new ArrayList<Runnable>();
+     *         q.drainTo(taskList);
+     *         //这里drainto之后还对队列进行了一次遍历，这里的目的是为了防止在drainto之后，队列中还有任务没有被移除。
+     *         if (!q.isEmpty()) {
+     *             for (Runnable r : q.toArray(new Runnable[0])) {
+     *                 if (q.remove(r))
+     *                     taskList.add(r);
+     *             }
+     *         }
+     *         return taskList;
+     *     }
+     *
+     *
+     *
      * @param c the collection to transfer elements into
      * @return the number of elements transferred
      * @throws UnsupportedOperationException if addition of elements
